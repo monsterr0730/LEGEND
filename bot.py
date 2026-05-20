@@ -63,7 +63,7 @@ COOLDOWN_TIME = 30
 BLOCKED_PORTS = [443, 8700, 9031, 17500, 20000, 20001, 20002]
 
 # ========== MONGODB ==========
-MONGO_URI = "mongodb+srv://mohitrao83076_db_user:LugF1xwlenkWRE1F@monster.ydmmckl.mongodb.net/?retryWrites=true&w=majority&appName=MONSTER"
+MONGO_URI = "mongodb+srv://mkjodi28_db_user:prKhMUvSAMmWdi4K@legend.eflrcmh.mongodb.net/?appName=LEGEND"
 client = MongoClient(MONGO_URI)
 db = client["xsilent_bot"]
 
