@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 import telebot
 import requests
@@ -381,11 +382,10 @@ def check_user_bot_expiry(user_id):
             return True
     return False
 
-def check_user_group_expiry(user_id, group_id):
-    """Check if specific user has valid group key for this group"""
+def check_user_group_expiry(user_id):
+    """Check if user has ANY valid group key"""
     now = time.time()
     for key, info in group_keys_data.items():
-        # Only check keys that are used by this specific user and not expired
         if info.get("used_by") == user_id and info.get("used") == True and now < info["expires_at"]:
             return True
     return False
@@ -848,7 +848,6 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
                 return
             key = args[1]
             
-            # Check if it's a bot key (only bot keys can be redeemed in hosted bot)
             if key in keys_data:
                 key_info = keys_data[key]
                 if key_info.get("used", False):
@@ -877,7 +876,7 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
                 hosted_bot.reply_to(msg, hstyled("✅ BOT ACCESS GRANTED", content, "success"))
                 return
             else:
-                hosted_bot.reply_to(msg, "❌ Invalid key! Group keys cannot be used here. Use group key in group only.")
+                hosted_bot.reply_to(msg, "❌ Invalid key! Group keys cannot be used here.")
         
         @hosted_bot.message_handler(commands=['status'])
         def hosted_status(msg):
@@ -1057,7 +1056,7 @@ def start(msg):
         group_id = str(msg.chat.id)
         attack_time = groups.get(group_id, {}).get("attack_time", None)
         if attack_time is not None and attack_time > 0:
-            content = f"│ 🔑 GROUP ACCESS REQUIRED\n│\n│ ⚡ Max Attack Time: {attack_time}s\n│ 📅 {current_time}\n│\n│ 📝 To attack in this group:\n│ 1. Get a group key from owner\n│ 2. Use /redeem KEY\n│ 3. Then use /attack IP PORT TIME"
+            content = f"│ 🔑 GROUP ACCESS REQUIRED\n│\n│ ⚡ Max Attack Time: {attack_time}s\n│ 📅 {current_time}\n│\n│ 📝 To attack in this group:\n│ 1. Get a group key from owner\n│ 2. Use /redeem KEY\n│ 3. Then use /attack IP PORT TIME\n│\n│ ⚠️ Note: Each user needs their own key!"
             bot.reply_to(msg, styled_msg("DDOS BOT", content, "attack"))
         else:
             bot.reply_to(msg, styled_msg("GROUP NOT CONFIGURED", "│ ❌ Group not configured!\n│ 📞 Contact Owner", "error"))
@@ -1162,7 +1161,8 @@ def start(msg):
 │ ℹ️ OTHER:
 │   /help
 │
-│ 🔸 For GROUP access: Use /redeem KEY in group"""
+│ 🔸 For GROUP access: Each user needs separate group key
+│   Use /redeem KEY in group to get access"""
         bot.reply_to(msg, styled_msg("USER PANEL", content, "success"))
     
     else:
@@ -1170,7 +1170,7 @@ def start(msg):
 │
 │ 🔑 Use /redeem KEY to activate access
 │   - In BOT for bot access
-│   - In GROUP for group access
+│   - In GROUP for group access (each user needs separate key)
 │
 │ 📅 {current_time}"""
         bot.reply_to(msg, styled_msg("UNAUTHORIZED", content, "error"))
@@ -1201,7 +1201,7 @@ def add_group(msg):
     groups[group_id] = {"attack_time": attack_time, "added_by": uid, "added_at": time.time()}
     save_groups(groups)
     
-    bot.reply_to(msg, f"✅ GROUP CONFIGURED!\n👥 Group ID: {group_id}\n⏱️ Max Attack Time: {attack_time}s\n\n📝 Users need group keys to attack here!\nUse /genkeygroup to generate group keys")
+    bot.reply_to(msg, f"✅ GROUP CONFIGURED!\n👥 Group ID: {group_id}\n⏱️ Max Attack Time: {attack_time}s\n\n📝 Each user needs their own group key to attack here!\nUse /genkeygroup to generate group keys")
 
 @bot.message_handler(commands=['removegroup'])
 def remove_group_cmd(msg):
@@ -1235,7 +1235,7 @@ def all_groups(msg):
         group_list.append(f"👥 {group_id}\n   ⏱️ Max Time: {info['attack_time']}s\n   👑 {info['added_by']}")
     
     if group_list:
-        bot.reply_to(msg, f"📋 ALL CONFIGURED GROUPS:\n\n" + "\n\n".join(group_list) + f"\n\nTotal: {len(groups)}\n\n📝 Users need individual group keys to attack in these groups!")
+        bot.reply_to(msg, f"📋 ALL CONFIGURED GROUPS:\n\n" + "\n\n".join(group_list) + f"\n\nTotal: {len(groups)}\n\n📝 Each user needs their own group key to attack in these groups!")
     else:
         bot.reply_to(msg, "📋 No groups configured yet!")
 
@@ -1536,16 +1536,16 @@ def redeem(msg):
                 del group_keys_data[key]
                 save_group_keys(group_keys_data)
                 return
-            # Mark key as used by THIS SPECIFIC USER
+            # Mark key as used by THIS SPECIFIC USER only
             group_keys_data[key]["used"] = True
             group_keys_data[key]["used_at"] = time.time()
             group_keys_data[key]["used_by"] = uid
             save_group_keys(group_keys_data)
             expiry_str = datetime.fromtimestamp(key_info['expires_at']).strftime('%d %b %Y, %I:%M %p')
-            bot.reply_to(msg, f"✅ GROUP ACCESS GRANTED!\n👤 User: {uid}\n⏰ Duration: {format_duration(key_info['duration_value'], key_info['duration_unit'])}\n📅 Expires: {expiry_str}\n\nNow you can attack in this group using /attack command")
+            bot.reply_to(msg, f"✅ GROUP ACCESS GRANTED!\n👤 User: {uid}\n⏰ Duration: {format_duration(key_info['duration_value'], key_info['duration_unit'])}\n📅 Expires: {expiry_str}\n\nNow YOU can attack in this group using /attack command")
             return
         else:
-            bot.reply_to(msg, "❌ Invalid key! Bot keys cannot be used in groups. Use group key only.")
+            bot.reply_to(msg, "❌ Invalid key! Bot keys cannot be used in groups.")
             return
     
     # PRIVATE CHAT - Only bot keys can be redeemed
@@ -1569,10 +1569,10 @@ def redeem(msg):
             keys_data[key]["used_by"] = uid
             save_keys(keys_data)
             expiry_str = datetime.fromtimestamp(key_info['expires_at']).strftime('%d %b %Y, %I:%M %p')
-            bot.reply_to(msg, f"✅ BOT ACCESS GRANTED!\n👤 User: {uid}\n⏰ Duration: {format_duration(key_info['duration_value'], key_info['duration_unit'])}\n📅 Expires: {expiry_str}\n\nNow you can attack in bot using /attack command")
+            bot.reply_to(msg, f"✅ BOT ACCESS GRANTED!\n👤 User: {uid}\n⏰ Duration: {format_duration(key_info['duration_value'], key_info['duration_unit'])}\n📅 Expires: {expiry_str}\n\nNow YOU can attack in bot using /attack command")
             return
         else:
-            bot.reply_to(msg, "❌ Invalid key! Group keys cannot be used in bot. Use bot key only.")
+            bot.reply_to(msg, "❌ Invalid key! Group keys cannot be used in bot.")
             return
 
 @bot.message_handler(commands=['attack'])
@@ -1596,9 +1596,9 @@ def attack(msg):
         
         max_time_limit = groups[group_id].get("attack_time", 0)
         
-        # Check if THIS SPECIFIC USER has group access (only user who redeemed key)
-        if not check_user_group_expiry(uid, group_id):
-            bot.reply_to(msg, styled_msg("GROUP ACCESS REQUIRED", f"│ 🔑 You don't have active group access!\n│\n│ Use /redeem KEY to get access\n│\n│ ⚡ Max Attack Time: {max_time_limit}s", "warning"))
+        # Check if THIS SPECIFIC USER has group access
+        if not check_user_group_expiry(uid):
+            bot.reply_to(msg, styled_msg("GROUP ACCESS REQUIRED", f"│ 🔑 You don't have active group access!\n│\n│ Use /redeem KEY to get YOUR OWN access\n│\n│ ⚡ Max Attack Time: {max_time_limit}s\n│\n│ ⚠️ Note: Each user needs their own key!", "warning"))
             return
         
         args = msg.text.split()
@@ -1718,14 +1718,13 @@ def status(msg):
     
     # For group status, check if user has group access
     if is_group:
-        group_id = str(msg.chat.id)
-        if not check_user_group_expiry(uid, group_id):
-            bot.reply_to(msg, styled_msg("UNAUTHORIZED", "│ ❌ You don't have group access!\n│ Use /redeem KEY to get access", "error"))
+        if not check_user_group_expiry(uid):
+            bot.reply_to(msg, styled_msg("UNAUTHORIZED", "│ ❌ You don't have group access!\n│ Use /redeem KEY to get YOUR OWN access", "error"))
             return
     else:
         if uid not in users and uid not in ADMIN_ID and uid not in resellers:
             if not check_user_bot_expiry(uid):
-                bot.reply_to(msg, styled_msg("UNAUTHORIZED", "│ ❌ Use /redeem KEY to activate access", "error"))
+                bot.reply_to(msg, styled_msg("UNAUTHORIZED", "│ ❌ Use /redeem KEY to activate bot access", "error"))
                 return
     
     now = time.time()
@@ -1768,9 +1767,8 @@ def cooldown_cmd(msg):
     
     # For group cooldown, check if user has group access
     if is_group:
-        group_id = str(msg.chat.id)
-        if not check_user_group_expiry(uid, group_id):
-            bot.reply_to(msg, styled_msg("UNAUTHORIZED", "│ ❌ You don't have group access!\n│ Use /redeem KEY to get access", "error"))
+        if not check_user_group_expiry(uid):
+            bot.reply_to(msg, styled_msg("UNAUTHORIZED", "│ ❌ You don't have group access!\n│ Use /redeem KEY to get YOUR OWN access", "error"))
             return
         bot.reply_to(msg, "✅ Group attacks have no cooldown!")
         return
@@ -1989,7 +1987,7 @@ def help_cmd(msg):
         group_id = str(msg.chat.id)
         max_time = groups.get(group_id, {}).get("attack_time", None)
         if max_time is not None and max_time > 0:
-            content = f"│ 📝 GROUP HELP\n│\n│ /redeem KEY - Get group access (only YOU will get access)\n│ /attack IP PORT TIME - Max {max_time}s\n│ /status - Check attack status\n│ /help\n│ /start\n│ 📅 {current_time}"
+            content = f"│ 📝 GROUP HELP\n│\n│ /redeem KEY - Get YOUR OWN group access\n│ /attack IP PORT TIME - Max {max_time}s\n│ /status - Check attack status\n│ /help\n│ /start\n│\n│ ⚠️ Note: Each user needs their own key!\n│ 📅 {current_time}"
         else:
             content = f"│ 📝 GROUP HELP\n│\n│ /help\n│ /start\n│ 📅 {current_time}"
         bot.reply_to(msg, styled_msg("GROUP HELP", content))
@@ -2075,8 +2073,8 @@ def help_cmd(msg):
 │ 🔑 KEYS:
 │   /redeem KEY - Get bot access (use in bot only)
 │
-│ 🔸 For GROUP attack: Each user needs separate group key
-│   Use /redeem KEY in group to get access
+│ 🔸 For GROUP attack: Each user needs their own group key
+│   Use /redeem KEY in group to get YOUR OWN access
 │
 │ 📅 {current_time}"""
             bot.reply_to(msg, styled_msg("USER HELP", content))
@@ -2085,8 +2083,8 @@ def help_cmd(msg):
 │
 │ Use /redeem KEY to activate bot access (use in bot only)
 │
-│ 🔸 For GROUP attack: Each user needs separate group key
-│   Use /redeem KEY in group to get access
+│ 🔸 For GROUP attack: Each user needs their own group key
+│   Use /redeem KEY in group to get YOUR OWN access
 │
 │ 📅 {current_time}"""
             bot.reply_to(msg, styled_msg("HELP", content, "warning"))
