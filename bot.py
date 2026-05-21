@@ -803,19 +803,20 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
             if uid != owner_id:
                 hosted_bot.reply_to(msg, "❌ Only bot owner can change max time!")
                 return
-            args = msg.text.split()
-            if len(args) != 2:
-                hosted_bot.reply_to(msg, "⚠️ Usage: /second 10-300")
+        args = msg.text.split()
+        if len(args) != 2:
+            hosted_bot.reply_to(msg, "⚠️ Usage: /second 10-300")
+            return
+        try:
+            new_max = int(args[1])
+            if new_max < 10 or new_max > 300:
+                hosted_bot.reply_to(msg, "❌ Value must be 10-300 seconds!")
                 return
-            try:
-                new_max = int(args[1])
-                if new_max < 10 or new_max > 300:
-                    hosted_bot.reply_to(msg, "❌ Value must be 10-300 seconds!")
-                    return
-                hosted_bots[bot_token]["max_time"] = new_max                save_hosted_bots(hosted_bots)
-                hosted_bot.reply_to(msg, f"✅ Max attack time set to {new_max}s")
-            except:
-                hosted_bot.reply_to(msg, "❌ Invalid number!")
+            hosted_bots[bot_token]["max_time"] = new_max
+            save_hosted_bots(hosted_bots)
+            hosted_bot.reply_to(msg, f"✅ Max attack time set to {new_max}s")
+        except:
+            hosted_bot.reply_to(msg, "❌ Invalid number!")
         
         @hosted_bot.message_handler(commands=['broadcast'])
         def hosted_broadcast(msg):
