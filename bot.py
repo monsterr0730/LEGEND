@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 import telebot
 import requests
@@ -320,7 +321,7 @@ def attack_cleanup():
 attack_cleanup_thread = threading.Thread(target=attack_cleanup, daemon=True)
 attack_cleanup_thread.start()
 
-# ========== PRIVATE CHAT COMMANDS (Only for Admin & Resellers) ==========
+# ========== PRIVATE CHAT COMMANDS ==========
 @bot.message_handler(commands=['start'], func=lambda msg: msg.chat.type == "private")
 def start_private(msg):
     uid = str(msg.chat.id)
@@ -381,8 +382,89 @@ def start_private(msg):
         bot.reply_to(msg, styled_msg("RESELLER PANEL", content, "success"))
     
     else:
-        # Normal users get no reply in private chat
+        # Normal users
+        has_access = check_user_expiry(uid)
+        if has_access:
+            for key, info in keys_data.items():
+                if info.get("used_by") == uid and info.get("used") == True:
+                    expiry = datetime.fromtimestamp(info["expires_at"]).strftime('%d %b %Y, %I:%M %p')
+                    duration = format_duration(info['duration_value'], info['duration_unit'])
+                    break
+            else:
+                expiry = "Unknown"
+                duration = "Unknown"
+            
+            content = f"""│ ✅ YOUR ACCESS
+│
+│ 👤 User: {uid}
+│ ⏰ Duration: {duration}
+│ 📅 Expires: {expiry}
+│
+│ ⚡ Max Attack Time: 300s
+│ 📅 {current_time}
+│
+│ 📝 TO ATTACK:
+│ Add this bot to any group and use /attack command
+│
+│ 📝 COMMANDS:
+│   /start - Check status"""
+            bot.reply_to(msg, styled_msg("USER PANEL", content, "success"))
+        else:
+            content = f"""│ 🔑 NO ACTIVE KEY
+│
+│ You don't have an active key!
+│
+│ 📝 To get access:
+│ 1. Get a key from owner/reseller
+│ 2. Use /redeem KEY
+│
+│ 📅 {current_time}
+│
+│ 📝 COMMANDS:
+│   /redeem KEY - Activate your key
+│   /start - Check status"""
+            bot.reply_to(msg, styled_msg("ACCESS REQUIRED", content, "warning"))
+
+@bot.message_handler(commands=['redeem'], func=lambda msg: msg.chat.type == "private")
+def redeem_private(msg):
+    uid = str(msg.chat.id)
+    
+    if check_maintenance():
+        bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
         return
+    
+    args = msg.text.split()
+    if len(args) != 2:
+        bot.reply_to(msg, "⚠️ Usage: /redeem KEY")
+        return
+    
+    key = args[1]
+    
+    if key not in keys_data:
+        bot.reply_to(msg, "❌ Invalid key!")
+        return
+    
+    key_info = keys_data[key]
+    
+    if key_info.get("used", False):
+        bot.reply_to(msg, "❌ Key already used by someone else!")
+        return
+    
+    if time.time() > key_info["expires_at"]:
+        bot.reply_to(msg, "❌ Key expired!")
+        del keys_data[key]
+        save_keys(keys_data)
+        return
+    
+    # Mark key as used by THIS USER
+    keys_data[key]["used"] = True
+    keys_data[key]["used_at"] = time.time()
+    keys_data[key]["used_by"] = uid
+    save_keys(keys_data)
+    
+    expiry_str = datetime.fromtimestamp(key_info['expires_at']).strftime('%d %b %Y, %I:%M %p')
+    
+    bot.reply_to(msg, f"✅ ACCESS GRANTED!\n👤 User: {uid}\n⏰ Duration: {format_duration(key_info['duration_value'], key_info['duration_unit'])}\n📅 Expires: {expiry_str}\n\nNow add this bot to any group and use /attack command!")
 
 @bot.message_handler(commands=['genkey'], func=lambda msg: msg.chat.type == "private")
 def genkey(msg):
@@ -813,10 +895,31 @@ def help_private(msg):
         bot.reply_to(msg, styled_msg("RESELLER HELP", content))
     
     else:
-        # Normal users get no reply in private chat
-        return
+        has_access = check_user_expiry(uid)
+        if has_access:
+            content = f"""│ 🔥 USER HELP
+│
+│ 📝 COMMANDS:
+│   /redeem KEY - Activate your key
+│   /start - Check your access status
+│
+│ 🔸 TO ATTACK:
+│   Add this bot to any group and use /attack command
+│
+│ 📅 {current_time}"""
+            bot.reply_to(msg, styled_msg("USER HELP", content))
+        else:
+            content = f"""│ 🔥 USER HELP
+│
+│ 📝 TO GET ACCESS:
+│   /redeem KEY - Activate your key│
+│ 🔸 AFTER REDEEM:
+│   Add this bot to any group and use /attack command
+│
+│ 📅 {current_time}"""
+            bot.reply_to(msg, styled_msg("USER HELP", content))
 
-# ========== GROUP CHAT COMMANDS (Bot works in ANY group, no approval needed) ==========
+# ========== GROUP CHAT COMMANDS (Attack ONLY in groups) ==========
 @bot.message_handler(commands=['start'], func=lambda msg: msg.chat.type in ["group", "supergroup"])
 def start_group(msg):
     uid = str(msg.chat.id)
@@ -830,21 +933,7 @@ def start_group(msg):
     has_access = check_user_expiry(uid)
     
     if has_access:
-        # Get expiry info
-        for key, info in keys_data.items():
-            if info.get("used_by") == uid and info.get("used") == True:
-                expiry = datetime.fromtimestamp(info["expires_at"]).strftime('%d %b %Y, %I:%M %p')
-                duration = format_duration(info['duration_value'], info['duration_unit'])
-                break
-        else:
-            expiry = "Unknown"
-            duration = "Unknown"
-        
-        content = f"""│ ✅ ACCESS ACTIVE
-│
-│ 👤 User: {uid}
-│ ⏰ Duration: {duration}
-│ 📅 Expires: {expiry}
+        content = f"""│ ✅ GROUP ATTACK BOT
 │
 │ ⚡ Max Attack Time: 300s
 │ 📅 {current_time}
@@ -862,56 +951,11 @@ def start_group(msg):
 │
 │ 📝 To get access:
 │ 1. Get a key from owner/reseller
-│ 2. Use /redeem KEY
+│ 2. Use /redeem KEY in PRIVATE chat with bot
 │
 │ ⚡ Max Attack Time: 300s
-│ 📅 {current_time}
-│
-│ 📝 COMMANDS:
-│   /redeem KEY
-│   /help"""
+│ 📅 {current_time}"""
         bot.reply_to(msg, styled_msg("ACCESS REQUIRED", content, "warning"))
-
-@bot.message_handler(commands=['redeem'], func=lambda msg: msg.chat.type in ["group", "supergroup"])
-def redeem_group(msg):
-    uid = str(msg.chat.id)
-    
-    if check_maintenance():
-        bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
-        return
-    
-    args = msg.text.split()
-    if len(args) != 2:
-        bot.reply_to(msg, "⚠️ Usage: /redeem KEY")
-        return
-    
-    key = args[1]
-    
-    if key not in keys_data:
-        bot.reply_to(msg, "❌ Invalid key!")
-        return
-    
-    key_info = keys_data[key]
-    
-    if key_info.get("used", False):
-        bot.reply_to(msg, "❌ Key already used by someone else!")
-        return
-    
-    if time.time() > key_info["expires_at"]:
-        bot.reply_to(msg, "❌ Key expired!")
-        del keys_data[key]
-        save_keys(keys_data)
-        return
-    
-    # Mark key as used by THIS USER
-    keys_data[key]["used"] = True
-    keys_data[key]["used_at"] = time.time()
-    keys_data[key]["used_by"] = uid
-    save_keys(keys_data)
-    
-    expiry_str = datetime.fromtimestamp(key_info['expires_at']).strftime('%d %b %Y, %I:%M %p')
-    
-    bot.reply_to(msg, f"✅ ACCESS GRANTED!\n👤 User: {uid}\n⏰ Duration: {format_duration(key_info['duration_value'], key_info['duration_unit'])}\n📅 Expires: {expiry_str}\n\nNow you can attack using /attack command!")
 
 @bot.message_handler(commands=['attack'], func=lambda msg: msg.chat.type in ["group", "supergroup"])
 def attack_group(msg):
@@ -923,7 +967,7 @@ def attack_group(msg):
     
     # Check if user has access
     if not check_user_expiry(uid):
-        bot.reply_to(msg, styled_msg("ACCESS DENIED", f"│ 🔑 You don't have active access!\n│\n│ Use /redeem KEY to get access\n│\n│ ⚡ Max Attack Time: 300s", "warning"))
+        bot.reply_to(msg, styled_msg("ACCESS DENIED", f"│ 🔑 You don't have active access!\n│\n│ Use /redeem KEY in PRIVATE chat with bot\n│\n│ ⚡ Max Attack Time: 300s", "warning"))
         return
     
     args = msg.text.split()
@@ -1001,7 +1045,7 @@ def status_group(msg):
     
     # Check if user has access
     if not check_user_expiry(uid):
-        bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ 🔑 You don't have active access!\n│ Use /redeem KEY to get access", "warning"))
+        bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ 🔑 You don't have active access!\n│ Use /redeem KEY in PRIVATE chat with bot", "warning"))
         return
     
     now = time.time()
@@ -1036,7 +1080,7 @@ def cooldown_group(msg):
     
     # Check if user has access
     if not check_user_expiry(uid):
-        bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ 🔑 You don't have active access!\n│ Use /redeem KEY to get access", "warning"))
+        bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ 🔑 You don't have active access!\n│ Use /redeem KEY in PRIVATE chat with bot", "warning"))
         return
     
     bot.reply_to(msg, "✅ No cooldown! You can attack anytime.")
@@ -1058,7 +1102,6 @@ def help_group(msg):
 │ /attack IP PORT TIME - Launch attack (Max 300s)
 │ /status - Check attack slots
 │ /cooldown - Check cooldown
-│ /start - Show your access info
 │ /help - This menu
 │
 │ 📅 {current_time}"""
@@ -1066,12 +1109,18 @@ def help_group(msg):
     else:
         content = f"""│ 📝 GROUP HELP
 │
-│ /redeem KEY - Get access to attack
-│ /help - This menu
+│ You need access to attack in this group!
+│
+│ Use /redeem KEY in PRIVATE chat with bot to get access
 │
 │ ⚡ Max Attack Time: 300s
 │ 📅 {current_time}"""
         bot.reply_to(msg, styled_msg("HELP", content))
+
+# ========== REDEEM IS NOT ALLOWED IN GROUPS - BLOCK IT ==========
+@bot.message_handler(commands=['redeem'], func=lambda msg: msg.chat.type in ["group", "supergroup"])
+def redeem_not_allowed(msg):
+    bot.reply_to(msg, "❌ /redeem command only works in PRIVATE chat with bot!\n\nPlease use /redeem KEY in private message.")
 
 # ========== IGNORE ALL OTHER MESSAGES ==========
 @bot.message_handler(func=lambda msg: True)
