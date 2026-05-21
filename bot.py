@@ -469,8 +469,26 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
             uid = str(msg.chat.id)
             current_time = format_ist_time(get_current_ist())
             has_access = check_user_expiry(uid)
+            is_owner = (uid == owner_id)
             
-            if has_access:
+            if is_owner:
+                content = f"""│ 👑 OWNER HELP
+│
+│ ⚔️ ATTACK:
+│   /attack IP PORT TIME
+│   /status
+│   /cooldown
+│
+│ 🔑 KEYS:
+│   /genkey 1 or 1h
+│   /redeem KEY
+│
+│ ⚙️ SETTINGS:
+│   /second 10-600
+│
+│ 📅 {current_time}"""
+                hosted_bot.reply_to(msg, hstyled("OWNER HELP", content))
+            elif has_access:
                 content = f"""│ 🔥 USER HELP
 │
 │ ⚔️ ATTACK:
@@ -480,11 +498,12 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
 │
 │ 🔑 KEYS:
 │   /genkey 1 or 1h
+│   /redeem KEY
 │
 │ 📅 {current_time}"""
-                hosted_bot.reply_to(msg, hstyled("HELP", content))
+                hosted_bot.reply_to(msg, hstyled("USER HELP", content))
             else:
-                content = f"""│ 🔑 NO ACCESS
+                content = f"""│ 🔑 ACCESS REQUIRED
 │
 │ Use /redeem KEY to get access
 │
