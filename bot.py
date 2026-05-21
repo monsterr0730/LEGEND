@@ -242,8 +242,8 @@ def check_active_attack_by_target(ip, port):
                 return None
     return None
 
-def check_user_group_expiry(user_id):
-    """Check if user has any valid group key"""
+def check_user_expiry(user_id):
+    """Check if user has any valid key"""
     now = time.time()
     for key, info in keys_data.items():
         if info.get("used_by") == user_id and info.get("used") == True and now < info["expires_at"]:
@@ -816,7 +816,7 @@ def help_private(msg):
         # Normal users get no reply in private chat
         return
 
-# ========== GROUP CHAT COMMANDS (All users can see, but attack only with key) ==========
+# ========== GROUP CHAT COMMANDS (Bot works in ANY group, no approval needed) ==========
 @bot.message_handler(commands=['start'], func=lambda msg: msg.chat.type in ["group", "supergroup"])
 def start_group(msg):
     uid = str(msg.chat.id)
@@ -826,8 +826,8 @@ def start_group(msg):
         bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
         return
     
-    # Check if user has redeemed a key
-    has_access = check_user_group_expiry(uid)
+    # Check if user has a valid key
+    has_access = check_user_expiry(uid)
     
     if has_access:
         # Get expiry info
@@ -858,7 +858,7 @@ def start_group(msg):
     else:
         content = f"""│ 🔑 NO ACCESS
 │
-│ You don't have active access in this group!
+│ You don't have active access!
 │
 │ 📝 To get access:
 │ 1. Get a key from owner/reseller
@@ -922,7 +922,7 @@ def attack_group(msg):
         return
     
     # Check if user has access
-    if not check_user_group_expiry(uid):
+    if not check_user_expiry(uid):
         bot.reply_to(msg, styled_msg("ACCESS DENIED", f"│ 🔑 You don't have active access!\n│\n│ Use /redeem KEY to get access\n│\n│ ⚡ Max Attack Time: 300s", "warning"))
         return
     
@@ -1000,7 +1000,7 @@ def status_group(msg):
         return
     
     # Check if user has access
-    if not check_user_group_expiry(uid):
+    if not check_user_expiry(uid):
         bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ 🔑 You don't have active access!\n│ Use /redeem KEY to get access", "warning"))
         return
     
@@ -1035,7 +1035,7 @@ def cooldown_group(msg):
         return
     
     # Check if user has access
-    if not check_user_group_expiry(uid):
+    if not check_user_expiry(uid):
         bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ 🔑 You don't have active access!\n│ Use /redeem KEY to get access", "warning"))
         return
     
@@ -1050,7 +1050,7 @@ def help_group(msg):
         bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
         return
     
-    has_access = check_user_group_expiry(uid)
+    has_access = check_user_expiry(uid)
     
     if has_access:
         content = f"""│ 📝 GROUP HELP
