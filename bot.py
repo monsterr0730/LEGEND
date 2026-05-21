@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 import telebot
 import requests
@@ -324,14 +323,14 @@ attack_cleanup_thread.start()
 # ========== PRIVATE CHAT COMMANDS ==========
 @bot.message_handler(commands=['start'], func=lambda msg: msg.chat.type == "private")
 def start_private(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)  # USER ID - sahi
     current_time = format_ist_time(get_current_ist())
     
     if check_maintenance():
         bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!\n│ ⏳ Please try again later.", "warning"))
         return
     
-    if uid in ADMIN_ID:
+    if user_id in ADMIN_ID:
         content = f"""│ 👑 OWNER PANEL
 │
 │ ⚡ Global Concurrent: {MAX_CONCURRENT}
@@ -363,7 +362,7 @@ def start_private(msg):
 │   /api_status"""
         bot.reply_to(msg, styled_msg("OWNER PANEL", content, "success"))
     
-    elif uid in resellers:
+    elif user_id in resellers:
         content = f"""│ 💎 RESELLER PANEL
 │
 │ ⚡ Global Concurrent: {MAX_CONCURRENT}
@@ -383,10 +382,10 @@ def start_private(msg):
     
     else:
         # Normal users
-        has_access = check_user_expiry(uid)
+        has_access = check_user_expiry(user_id)
         if has_access:
             for key, info in keys_data.items():
-                if info.get("used_by") == uid and info.get("used") == True:
+                if info.get("used_by") == user_id and info.get("used") == True:
                     expiry = datetime.fromtimestamp(info["expires_at"]).strftime('%d %b %Y, %I:%M %p')
                     duration = format_duration(info['duration_value'], info['duration_unit'])
                     break
@@ -396,7 +395,7 @@ def start_private(msg):
             
             content = f"""│ ✅ YOUR ACCESS
 │
-│ 👤 User: {uid}
+│ 👤 User: {user_id}
 │ ⏰ Duration: {duration}
 │ 📅 Expires: {expiry}
 │
@@ -427,7 +426,7 @@ def start_private(msg):
 
 @bot.message_handler(commands=['redeem'], func=lambda msg: msg.chat.type == "private")
 def redeem_private(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)  # USER ID - sahi
     
     if check_maintenance():
         bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
@@ -459,22 +458,22 @@ def redeem_private(msg):
     # Mark key as used by THIS USER
     keys_data[key]["used"] = True
     keys_data[key]["used_at"] = time.time()
-    keys_data[key]["used_by"] = uid
+    keys_data[key]["used_by"] = user_id
     save_keys(keys_data)
     
     expiry_str = datetime.fromtimestamp(key_info['expires_at']).strftime('%d %b %Y, %I:%M %p')
     
-    bot.reply_to(msg, f"✅ ACCESS GRANTED!\n👤 User: {uid}\n⏰ Duration: {format_duration(key_info['duration_value'], key_info['duration_unit'])}\n📅 Expires: {expiry_str}\n\nNow add this bot to any group and use /attack command!")
+    bot.reply_to(msg, f"✅ ACCESS GRANTED!\n👤 User: {user_id}\n⏰ Duration: {format_duration(key_info['duration_value'], key_info['duration_unit'])}\n📅 Expires: {expiry_str}\n\nNow add this bot to any group and use /attack command!")
 
 @bot.message_handler(commands=['genkey'], func=lambda msg: msg.chat.type == "private")
 def genkey(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)
     
     if check_maintenance():
         bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
         return
     
-    if uid not in ADMIN_ID and uid not in resellers:
+    if user_id not in ADMIN_ID and user_id not in resellers:
         return
     
     args = msg.text.split()
@@ -493,7 +492,7 @@ def genkey(msg):
     keys_data[key] = {
         "duration_value": value, 
         "duration_unit": unit, 
-        "generated_by": uid, 
+        "generated_by": user_id, 
         "generated_at": time.time(), 
         "expires_at": expires_at.timestamp(), 
         "used": False
@@ -505,13 +504,13 @@ def genkey(msg):
 
 @bot.message_handler(commands=['bulk'], func=lambda msg: msg.chat.type == "private")
 def bulk(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)
     
     if check_maintenance():
         bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
         return
     
-    if uid not in ADMIN_ID and uid not in resellers:
+    if user_id not in ADMIN_ID and user_id not in resellers:
         return
     
     args = msg.text.split()
@@ -541,7 +540,7 @@ def bulk(msg):
         keys_data[key] = {
             "duration_value": value, 
             "duration_unit": unit, 
-            "generated_by": uid, 
+            "generated_by": user_id, 
             "generated_at": time.time(), 
             "expires_at": expires_at.timestamp(), 
             "used": False
@@ -555,13 +554,13 @@ def bulk(msg):
 
 @bot.message_handler(commands=['removekey'], func=lambda msg: msg.chat.type == "private")
 def remove_key(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)
     
     if check_maintenance():
         bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
         return
     
-    if uid not in ADMIN_ID:
+    if user_id not in ADMIN_ID:
         return
     
     args = msg.text.split()
@@ -579,18 +578,18 @@ def remove_key(msg):
 
 @bot.message_handler(commands=['mykeys'], func=lambda msg: msg.chat.type == "private")
 def mykeys(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)
     
     if check_maintenance():
         bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
         return
     
-    if uid not in ADMIN_ID and uid not in resellers:
+    if user_id not in ADMIN_ID and user_id not in resellers:
         return
     
     my_keys = []
     for key, info in keys_data.items():
-        if info.get("generated_by") == uid and not info.get("used", False):
+        if info.get("generated_by") == user_id and not info.get("used", False):
             expires = datetime.fromtimestamp(info["expires_at"]).strftime('%d %b %Y, %I:%M %p')
             my_keys.append(f"🔑 `{key}`\n   ⏰ {format_duration(info['duration_value'], info['duration_unit'])}\n   📅 Expires: {expires}")
     
@@ -601,9 +600,9 @@ def mykeys(msg):
 
 @bot.message_handler(commands=['addreseller'], func=lambda msg: msg.chat.type == "private")
 def add_reseller(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)
     
-    if uid not in ADMIN_ID:
+    if user_id not in ADMIN_ID:
         return
     
     args = msg.text.split()
@@ -626,9 +625,9 @@ def add_reseller(msg):
 
 @bot.message_handler(commands=['removereseller'], func=lambda msg: msg.chat.type == "private")
 def remove_reseller(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)
     
-    if uid not in ADMIN_ID:
+    if user_id not in ADMIN_ID:
         return
     
     args = msg.text.split()
@@ -648,9 +647,9 @@ def remove_reseller(msg):
 
 @bot.message_handler(commands=['setmax'], func=lambda msg: msg.chat.type == "private")
 def set_max_concurrent(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)
     
-    if uid not in ADMIN_ID:
+    if user_id not in ADMIN_ID:
         return
     
     args = msg.text.split()
@@ -676,9 +675,9 @@ def set_max_concurrent(msg):
 
 @bot.message_handler(commands=['setcooldown'], func=lambda msg: msg.chat.type == "private")
 def set_cooldown(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)
     
-    if uid not in ADMIN_ID:
+    if user_id not in ADMIN_ID:
         return
     
     args = msg.text.split()
@@ -704,9 +703,9 @@ def set_cooldown(msg):
 
 @bot.message_handler(commands=['broadcast'], func=lambda msg: msg.chat.type == "private")
 def broadcast(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)
     
-    if uid not in ADMIN_ID:
+    if user_id not in ADMIN_ID:
         return
     
     if msg.reply_to_message:
@@ -760,9 +759,9 @@ def broadcast(msg):
 
 @bot.message_handler(commands=['stopattack'], func=lambda msg: msg.chat.type == "private")
 def stop_attack(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)
     
-    if uid not in ADMIN_ID:
+    if user_id not in ADMIN_ID:
         return
     
     args = msg.text.split()
@@ -789,9 +788,9 @@ def stop_attack(msg):
 
 @bot.message_handler(commands=['allusers'], func=lambda msg: msg.chat.type == "private")
 def all_users(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)
     
-    if uid not in ADMIN_ID:
+    if user_id not in ADMIN_ID:
         return
     
     active_users = set()
@@ -810,9 +809,9 @@ def all_users(msg):
 
 @bot.message_handler(commands=['api_status'], func=lambda msg: msg.chat.type == "private")
 def api_status(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)
     
-    if uid not in ADMIN_ID:
+    if user_id not in ADMIN_ID:
         return
     
     try:
@@ -825,9 +824,9 @@ def api_status(msg):
 
 @bot.message_handler(commands=['maintenance'], func=lambda msg: msg.chat.type == "private")
 def maintenance(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)
     
-    if uid not in ADMIN_ID:
+    if user_id not in ADMIN_ID:
         return
     
     args = msg.text.split()
@@ -849,14 +848,14 @@ def maintenance(msg):
 
 @bot.message_handler(commands=['help'], func=lambda msg: msg.chat.type == "private")
 def help_private(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)
     current_time = format_ist_time(get_current_ist())
     
     if check_maintenance():
         bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
         return
     
-    if uid in ADMIN_ID:
+    if user_id in ADMIN_ID:
         content = f"""│ 👑 OWNER HELP
 │
 │ 🔑 KEYS:
@@ -883,7 +882,7 @@ def help_private(msg):
 │ 📅 {current_time}"""
         bot.reply_to(msg, styled_msg("OWNER HELP", content))
     
-    elif uid in resellers:
+    elif user_id in resellers:
         content = f"""│ 💎 RESELLER HELP
 │
 │ 🔑 KEYS:
@@ -895,7 +894,7 @@ def help_private(msg):
         bot.reply_to(msg, styled_msg("RESELLER HELP", content))
     
     else:
-        has_access = check_user_expiry(uid)
+        has_access = check_user_expiry(user_id)
         if has_access:
             content = f"""│ 🔥 USER HELP
 │
@@ -912,17 +911,18 @@ def help_private(msg):
             content = f"""│ 🔥 USER HELP
 │
 │ 📝 TO GET ACCESS:
-│   /redeem KEY - Activate your key│
+│   /redeem KEY - Activate your key
+│
 │ 🔸 AFTER REDEEM:
 │   Add this bot to any group and use /attack command
 │
 │ 📅 {current_time}"""
             bot.reply_to(msg, styled_msg("USER HELP", content))
 
-# ========== GROUP CHAT COMMANDS (Attack ONLY in groups) ==========
+# ========== GROUP CHAT COMMANDS (Using USER ID, not GROUP ID) ==========
 @bot.message_handler(commands=['start'], func=lambda msg: msg.chat.type in ["group", "supergroup"])
 def start_group(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)  # USER ID - important!
     current_time = format_ist_time(get_current_ist())
     
     if check_maintenance():
@@ -930,11 +930,12 @@ def start_group(msg):
         return
     
     # Check if user has a valid key
-    has_access = check_user_expiry(uid)
+    has_access = check_user_expiry(user_id)
     
     if has_access:
         content = f"""│ ✅ GROUP ATTACK BOT
 │
+│ 👤 Your ID: {user_id}
 │ ⚡ Max Attack Time: 300s
 │ 📅 {current_time}
 │
@@ -959,14 +960,14 @@ def start_group(msg):
 
 @bot.message_handler(commands=['attack'], func=lambda msg: msg.chat.type in ["group", "supergroup"])
 def attack_group(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)  # USER ID - important!
     
     if check_maintenance():
         bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
         return
     
     # Check if user has access
-    if not check_user_expiry(uid):
+    if not check_user_expiry(user_id):
         bot.reply_to(msg, styled_msg("ACCESS DENIED", f"│ 🔑 You don't have active access!\n│\n│ Use /redeem KEY in PRIVATE chat with bot\n│\n│ ⚡ Max Attack Time: 300s", "warning"))
         return
     
@@ -1009,12 +1010,12 @@ def attack_group(msg):
         bot.reply_to(msg, f"❌ TARGET UNDER ATTACK!\n\n🎯 {ip}:{port} already being attacked\n👤 By: {existing_attack['user']}\n⏰ Finishes in: {remaining}s")
         return
     
-    attack_id = f"{uid}_{int(time.time())}_{random.randint(1000, 9999)}"
+    attack_id = f"{user_id}_{int(time.time())}_{random.randint(1000, 9999)}"
     target_key = f"{ip}:{port}"
     finish_time = time.time() + duration
     
     active_attacks[attack_id] = {
-        "user": uid,
+        "user": user_id,
         "finish_time": finish_time,
         "ip": ip,
         "port": port,
@@ -1037,14 +1038,14 @@ def attack_group(msg):
 
 @bot.message_handler(commands=['status'], func=lambda msg: msg.chat.type in ["group", "supergroup"])
 def status_group(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)  # USER ID - important!
     
     if check_maintenance():
         bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
         return
     
     # Check if user has access
-    if not check_user_expiry(uid):
+    if not check_user_expiry(user_id):
         bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ 🔑 You don't have active access!\n│ Use /redeem KEY in PRIVATE chat with bot", "warning"))
         return
     
@@ -1072,14 +1073,14 @@ def status_group(msg):
 
 @bot.message_handler(commands=['cooldown'], func=lambda msg: msg.chat.type in ["group", "supergroup"])
 def cooldown_group(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)  # USER ID - important!
     
     if check_maintenance():
         bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
         return
     
     # Check if user has access
-    if not check_user_expiry(uid):
+    if not check_user_expiry(user_id):
         bot.reply_to(msg, styled_msg("ACCESS DENIED", "│ 🔑 You don't have active access!\n│ Use /redeem KEY in PRIVATE chat with bot", "warning"))
         return
     
@@ -1087,14 +1088,14 @@ def cooldown_group(msg):
 
 @bot.message_handler(commands=['help'], func=lambda msg: msg.chat.type in ["group", "supergroup"])
 def help_group(msg):
-    uid = str(msg.chat.id)
+    user_id = str(msg.from_user.id)  # USER ID - important!
     current_time = format_ist_time(get_current_ist())
     
     if check_maintenance():
         bot.reply_to(msg, styled_msg("MAINTENANCE MODE", "│ 🔧 Bot is under maintenance!", "warning"))
         return
     
-    has_access = check_user_expiry(uid)
+    has_access = check_user_expiry(user_id)
     
     if has_access:
         content = f"""│ 📝 GROUP HELP
@@ -1117,7 +1118,7 @@ def help_group(msg):
 │ 📅 {current_time}"""
         bot.reply_to(msg, styled_msg("HELP", content))
 
-# ========== REDEEM IS NOT ALLOWED IN GROUPS - BLOCK IT ==========
+# ========== REDEEM IS NOT ALLOWED IN GROUPS ==========
 @bot.message_handler(commands=['redeem'], func=lambda msg: msg.chat.type in ["group", "supergroup"])
 def redeem_not_allowed(msg):
     bot.reply_to(msg, "❌ /redeem command only works in PRIVATE chat with bot!\n\nPlease use /redeem KEY in private message.")
