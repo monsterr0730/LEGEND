@@ -543,7 +543,8 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
             save_keys(keys_data)
             expiry_str = expires_at.strftime('%d %b %Y, %I:%M %p')
             
-            hosted_bot.reply_to(msg, f"🔑 KEY GENERATED!\n\n🔑 {key}\n⏰ Duration: {format_duration(value, unit)}\n📅 Expires: {expiry_str}")
+            # Send key in code block for easy copy
+            hosted_bot.reply_to(msg, f"🔑 `{key}`\n\n⏰ Duration: {format_duration(value, unit)}\n📅 Expires: {expiry_str}", parse_mode="Markdown")
         
         @hosted_bot.message_handler(commands=['cooldown'])
         def hosted_cooldown(msg):
@@ -1097,7 +1098,8 @@ def genkey(msg):
     save_keys(keys_data)
     expiry_str = expires_at.strftime('%d %b %Y, %I:%M %p')
     
-    bot.reply_to(msg, f"🔑 {key}\n\n⏰ Duration: {format_duration(value, unit)}\n📅 Expires: {expiry_str}")
+    # Send key in code block for easy copy
+    bot.reply_to(msg, f"🔑 `{key}`\n\n⏰ Duration: {format_duration(value, unit)}\n📅 Expires: {expiry_str}", parse_mode="Markdown")
 
 @bot.message_handler(commands=['bulk'], func=lambda msg: msg.chat.type == "private")
 def bulk(msg):
@@ -1145,9 +1147,9 @@ def bulk(msg):
         keys.append(key)
     save_keys(keys_data)
     
-    keys_text = "\n".join(keys)
+    keys_text = "\n".join([f"`{k}`" for k in keys])
     expiry_str = expires_at.strftime('%d %b %Y, %I:%M %p')
-    bot.reply_to(msg, f"🔑 KEYS GENERATED:\n\n{keys_text}\n\n⏰ Duration: {format_duration(value, unit)}\n📅 Expires: {expiry_str}")
+    bot.reply_to(msg, f"🔑 KEYS GENERATED:\n\n{keys_text}\n\n⏰ Duration: {format_duration(value, unit)}\n📅 Expires: {expiry_str}", parse_mode="Markdown")
 
 @bot.message_handler(commands=['removekey'], func=lambda msg: msg.chat.type == "private")
 def remove_key(msg):
@@ -1169,7 +1171,7 @@ def remove_key(msg):
     if key in keys_data:
         del keys_data[key]
         save_keys(keys_data)
-        bot.reply_to(msg, f"✅ KEY REMOVED!\n🔑 Key: {key}")
+        bot.reply_to(msg, f"✅ KEY REMOVED!\n🔑 Key: `{key}`", parse_mode="Markdown")
     else:
         bot.reply_to(msg, "❌ Key not found!")
 
@@ -1188,10 +1190,10 @@ def mykeys(msg):
     for key, info in keys_data.items():
         if info.get("generated_by") == user_id and not info.get("used", False):
             expires = datetime.fromtimestamp(info["expires_at"]).strftime('%d %b %Y, %I:%M %p')
-            my_keys.append(f"🔑 {key}\n   ⏰ {format_duration(info['duration_value'], info['duration_unit'])}\n   📅 Expires: {expires}")
+            my_keys.append(f"🔑 `{key}`\n   ⏰ {format_duration(info['duration_value'], info['duration_unit'])}\n   📅 Expires: {expires}")
     
     if my_keys:
-        bot.reply_to(msg, "📋 YOUR KEYS:\n\n" + "\n\n".join(my_keys))
+        bot.reply_to(msg, "📋 YOUR KEYS:\n\n" + "\n\n".join(my_keys), parse_mode="Markdown")
     else:
         bot.reply_to(msg, "📋 No keys generated yet!")
 
