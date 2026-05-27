@@ -32,7 +32,7 @@ def bold_msg(text):
     return f"<b>{text}</b>"
 
 # ========== CONFIG ==========
-BOT_TOKEN = "8604194287:AAFEhPxNzuHxWfw5yMkk60M_6CqU1kgAji4"
+BOT_TOKEN = "8971995233:AAEjcqEsmT97or8sjO6oxQJZA6UyTjYz6Zc"
 ADMIN_ID = ["8487946379", "7495474613"]
 API_URL = "http://app.teamc2.xyz/api/attack"
 API_KEY = "W1SMH5"
