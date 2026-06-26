@@ -19,7 +19,7 @@ from telebot import types
 executor = ThreadPoolExecutor(max_workers=10)
 
 # =============== MONGODB ===============
-MONGO_URI = "mongodb+srv://MONSTER:xs2ntc4U9r11PkbZ@cluster0.07q3hqb.mongodb.net/?appName=Cluster0"
+MONGO_URI = "mongodb+srv://MONSTER:xs2ntc4U9r11PkbZ@cluster0.07q3hqb.mongodb.net/?appName=luster0"
 client = MongoClient(MONGO_URI, 
                      serverSelectionTimeoutMS=5000,
                      connectTimeoutMS=5000,
