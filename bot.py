@@ -177,7 +177,7 @@ def restore_from_backup(data):
     
     return {"users": users_added, "history": history_added}
 
-# =============== ONLY OWNER COMMANDS (Hidden from users) ===============
+# =============== ONLY OWNER COMMANDS ===============
 
 @bot.message_handler(commands=['broadcast'])
 def broadcast_cmd(m):
@@ -230,8 +230,8 @@ def broadcast_cmd(m):
                         else:
                             bot.copy_message(user_id, m.chat.id, msg_obj.message_id)
                     success += 1
-                except:
-                    if "blocked" in str(e).lower():
+                except Exception as err:
+                    if "blocked" in str(err).lower():
                         blocked += 1
                         users_collection.delete_one({"_id": user_id})
                     else:
@@ -259,9 +259,9 @@ def broadcast_cmd(m):
                 msg.chat.id, msg.message_id,
                 parse_mode="Markdown"
             )
-        except Exception as e:
+        except Exception as err:
             bot.edit_message_text(
-                f"❌ *Failed:* {str(e)[:100]}",
+                f"❌ *Failed:* {str(err)[:100]}",
                 msg.chat.id, msg.message_id,
                 parse_mode="Markdown"
             )
@@ -294,9 +294,9 @@ def backup_cmd(m):
                 msg.chat.id, msg.message_id,
                 parse_mode="Markdown"
             )
-        except Exception as e:
+        except Exception as err:
             bot.edit_message_text(
-                f"❌ *Failed:* {str(e)[:100]}",
+                f"❌ *Failed:* {str(err)[:100]}",
                 msg.chat.id, msg.message_id,
                 parse_mode="Markdown"
             )
@@ -330,9 +330,9 @@ def restore_cmd(m):
                 msg.chat.id, msg.message_id,
                 parse_mode="Markdown"
             )
-        except Exception as e:
+        except Exception as err:
             bot.edit_message_text(
-                f"❌ *Failed:* {str(e)[:100]}",
+                f"❌ *Failed:* {str(err)[:100]}",
                 msg.chat.id, msg.message_id,
                 parse_mode="Markdown"
             )
@@ -406,8 +406,8 @@ def export_cmd(m):
             
             os.remove(file_name)
             bot.edit_message_text("✅ *Export Complete!*", msg.chat.id, msg.message_id)
-        except Exception as e:
-            bot.edit_message_text(f"❌ *Failed:* {str(e)[:100]}", msg.chat.id, msg.message_id)
+        except Exception as err:
+            bot.edit_message_text(f"❌ *Failed:* {str(err)[:100]}", msg.chat.id, msg.message_id)
     
     executor.submit(handle_export)
 
@@ -426,8 +426,8 @@ def sendto_cmd(m):
     try:
         bot.copy_message(target, m.chat.id, m.reply_to_message.message_id)
         bot.reply_to(m, f"✅ *Sent to {target}*", parse_mode="Markdown")
-    except Exception as e:
-        bot.reply_to(m, f"❌ *Failed:* {str(e)[:100]}", parse_mode="Markdown")
+    except Exception as err:
+        bot.reply_to(m, f"❌ *Failed:* {str(err)[:100]}", parse_mode="Markdown")
 
 @bot.message_handler(commands=['deleteallusers'])
 def delete_all_users(m):
