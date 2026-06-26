@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-📢 MEGA BROADCAST BOT - Send Anything to All Users!
-🔄 Supports: Photo, Video, Document, Sticker, Voice, Audio, Animation, Text, Links
+📢 BROADCAST BOT - Clean Version
+👑 Owner commands hidden from users
 """
 
 import telebot
@@ -20,14 +20,24 @@ executor = ThreadPoolExecutor(max_workers=10)
 
 # =============== MONGODB ===============
 MONGO_URI = "mongodb+srv://MONSTER:xs2ntc4U9r11PkbZ@cluster0.07q3hqb.mongodb.net/?appName=Cluster0"
-client = MongoClient(MONGO_URI)
+client = MongoClient(MONGO_URI, 
+                     serverSelectionTimeoutMS=5000,
+                     connectTimeoutMS=5000,
+                     socketTimeoutMS=5000)
+try:
+    client.admin.command('ping')
+    print("✅ MongoDB Connected!")
+except Exception as e:
+    print(f"❌ MongoDB Connection Failed: {e}")
+    exit(1)
+
 db = client["broadcast_bot"]
 
 users_collection = db["users"]
 broadcast_history = db["broadcast_history"]
 settings_collection = db["settings"]
 
-print("✅ MongoDB Connected!")
+print("✅ Collections Ready!")
 
 # =============== CONFIG ===============
 BOT_TOKEN = "8638318202:AAHuhX2nvJkOkPLpMrjvU_cVEDp6XE5tCbI"
@@ -35,16 +45,19 @@ OWNER_IDS = [7192516189]
 
 bot = telebot.TeleBot(BOT_TOKEN, num_threads=20)
 
+# =============== BACKUP FOLDER ===============
+BACKUP_FOLDER = "backups"
+if not os.path.exists(BACKUP_FOLDER):
+    os.makedirs(BACKUP_FOLDER)
+
 # =============== OWNER NAME SETTINGS ===============
 def get_owner_name():
-    """Get owner display name from settings"""
     settings = settings_collection.find_one({"_id": "owner_settings"})
     if settings and settings.get("display_name"):
         return settings["display_name"]
     return None
 
 def set_owner_name(name):
-    """Set owner display name"""
     settings_collection.update_one(
         {"_id": "owner_settings"},
         {"$set": {"display_name": name}},
@@ -52,7 +65,6 @@ def set_owner_name(name):
     )
 
 def remove_owner_name():
-    """Remove owner display name"""
     settings_collection.update_one(
         {"_id": "owner_settings"},
         {"$unset": {"display_name": ""}}
@@ -63,16 +75,13 @@ def is_owner(user_id):
     return int(user_id) in OWNER_IDS
 
 def bold(text):
-    """Make text bold"""
     return f"*{text}*"
 
 def styled_reply(text, status="info"):
-    """Styled reply with bold text"""
     icon = "✅" if status == "success" else "❌" if status == "error" else "⚠️" if status == "warning" else "📌"
     return f"{icon} {bold(text)}"
 
 def get_all_users():
-    """Get all users from database"""
     users = []
     for user in users_collection.find({}, {"_id": 1}):
         users.append(user["_id"])
@@ -82,7 +91,6 @@ def get_user_count():
     return users_collection.count_documents({})
 
 def save_user(user_id, username=None, first_name=None):
-    """Save or update user in database"""
     update_data = {
         "last_active": datetime.now().isoformat()
     }
@@ -97,99 +105,95 @@ def save_user(user_id, username=None, first_name=None):
         upsert=True
     )
 
-# =============== BROADCAST FUNCTION ===============
-def broadcast_to_all(message_obj, caption=None, is_forward=False):
-    """Send any type of message to all users"""
-    users = get_all_users()
-    total = len(users)
-    success = 0
-    fail = 0
-    blocked = 0
+# =============== BACKUP FUNCTIONS ===============
+def create_full_backup():
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_file = os.path.join(BACKUP_FOLDER, f"full_backup_{timestamp}.json")
     
-    for user_id in users:
-        try:
-            if is_forward:
-                bot.forward_message(user_id, message_obj.chat.id, message_obj.message_id)
-            else:
-                if message_obj.photo:
-                    bot.send_photo(user_id, message_obj.photo[-1].file_id, caption=caption)
-                elif message_obj.video:
-                    bot.send_video(user_id, message_obj.video.file_id, caption=caption)
-                elif message_obj.document:
-                    bot.send_document(user_id, message_obj.document.file_id, caption=caption)
-                elif message_obj.sticker:
-                    bot.send_sticker(user_id, message_obj.sticker.file_id)
-                elif message_obj.voice:
-                    bot.send_voice(user_id, message_obj.voice.file_id, caption=caption)
-                elif message_obj.audio:
-                    bot.send_audio(user_id, message_obj.audio.file_id, caption=caption)
-                elif message_obj.animation:
-                    bot.send_animation(user_id, message_obj.animation.file_id, caption=caption)
-                elif message_obj.video_note:
-                    bot.send_video_note(user_id, message_obj.video_note.file_id)
-                elif message_obj.text:
-                    bot.send_message(user_id, caption if caption else message_obj.text)
-                else:
-                    bot.copy_message(user_id, message_obj.chat.id, message_obj.message_id)
-            
-            success += 1
-            
-        except Exception as e:
-            if "blocked" in str(e).lower():
-                blocked += 1
-                users_collection.delete_one({"_id": user_id})
-            else:
-                fail += 1
-        
-        time.sleep(0.02)
+    all_users = list(users_collection.find({}))
+    all_history = list(broadcast_history.find({}))
+    all_settings = list(settings_collection.find({}))
     
-    return {"success": success, "fail": fail, "blocked": blocked, "total": total}
+    # Convert ObjectId to string
+    for user in all_users:
+        user["_id"] = str(user["_id"])
+    for h in all_history:
+        h["_id"] = str(h["_id"])
+    for s in all_settings:
+        s["_id"] = str(s["_id"])
+    
+    data = {
+        "backup_info": {
+            "version": "2.0",
+            "created_at": datetime.now().isoformat(),
+            "created_at_readable": datetime.now().strftime('%d %b %Y, %I:%M:%S %p'),
+            "bot_name": bot.get_me().username,
+            "total_users": len(all_users),
+            "total_broadcasts": len(all_history)
+        },
+        "users": all_users,
+        "broadcast_history": all_history,
+        "settings": all_settings
+    }
+    
+    with open(backup_file, "w", encoding='utf-8') as f:
+        json.dump(data, f, indent=4, ensure_ascii=False, default=str)
+    
+    return backup_file, data
 
-def save_broadcast_history(broadcast_type, success, fail, blocked, total, sender_id):
-    broadcast_history.insert_one({
-        "type": broadcast_type,
-        "success": success,
-        "fail": fail,
-        "blocked": blocked,
-        "total": total,
-        "sender_id": sender_id,
-        "timestamp": datetime.now().isoformat(),
-        "time_readable": datetime.now().strftime('%d %b %Y, %I:%M:%S %p')
-    })
+def restore_from_backup(data):
+    users_added = 0
+    history_added = 0
+    
+    for user in data.get("users", []):
+        user_id = user.get("_id")
+        if user_id:
+            try:
+                user_copy = user.copy()
+                user_copy.pop("_id", None)
+                users_collection.update_one(
+                    {"_id": user_id},
+                    {"$set": user_copy},
+                    upsert=True
+                )
+                users_added += 1
+            except:
+                pass
+    
+    for history in data.get("broadcast_history", []):
+        history_id = history.get("_id")
+        if history_id:
+            try:
+                history_copy = history.copy()
+                history_copy.pop("_id", None)
+                broadcast_history.update_one(
+                    {"_id": history_id},
+                    {"$set": history_copy},
+                    upsert=True
+                )
+                history_added += 1
+            except:
+                pass
+    
+    return {"users": users_added, "history": history_added}
 
-def get_broadcast_history(limit=10):
-    return list(broadcast_history.find().sort("timestamp", -1).limit(limit))
+# =============== ONLY OWNER COMMANDS (Hidden from users) ===============
 
-# =============== BROADCAST COMMAND ===============
 @bot.message_handler(commands=['broadcast'])
 def broadcast_cmd(m):
     uid = str(m.chat.id)
-    
     if not is_owner(uid):
-        bot.reply_to(m, styled_reply("Owner only!", "error"), parse_mode="Markdown")
         return
     
     if not m.reply_to_message:
         bot.reply_to(m, 
-            styled_reply("📢 BROADCAST INSTRUCTIONS", "info") + "\n\n"
-            "*1️⃣* Reply to any message (photo, video, file, link, etc.)\n"
-            "*2️⃣* Type /broadcast\n\n"
-            "*✅ Works with:*\n"
-            "📸 Photo\n"
-            "🎥 Video\n"
-            "📁 Document (APK, PDF, etc.)\n"
-            "🔗 Links\n"
-            "🎨 Sticker\n"
-            "🎵 Voice/Audio\n"
-            "🎬 Animation (GIF)\n"
-            "📝 Text Message\n"
-            "🔄 Forwarded Message\n\n"
-            "*Example:* Reply to a photo and type /broadcast",
+            "📢 *Reply to any message to broadcast!*\n\n"
+            "*Works with:* Photo, Video, Document, Sticker, Voice, Audio, Text, Links",
             parse_mode="Markdown"
         )
         return
     
-    msg = bot.reply_to(m, styled_reply("⏳ Broadcasting... Please wait.", "info"), parse_mode="Markdown")
+    msg = bot.reply_to(m, "⏳ *Broadcasting...*", parse_mode="Markdown")
     
     def handle_broadcast():
         try:
@@ -197,122 +201,175 @@ def broadcast_cmd(m):
             caption = m.text.replace("/broadcast", "").strip() if m.text else None
             is_forward = m.reply_to_message.forward_date is not None
             
-            result = broadcast_to_all(m.reply_to_message, caption, is_forward)
+            success = 0
+            fail = 0
+            blocked = 0
             
-            save_broadcast_history(
-                "mixed" if not caption else "text_with_media",
-                result["success"],
-                result["fail"],
-                result["blocked"],
-                result["total"],
-                uid
-            )
+            for user_id in get_all_users():
+                try:
+                    if is_forward:
+                        bot.forward_message(user_id, m.chat.id, m.reply_to_message.message_id)
+                    else:
+                        msg_obj = m.reply_to_message
+                        if msg_obj.photo:
+                            bot.send_photo(user_id, msg_obj.photo[-1].file_id, caption=caption)
+                        elif msg_obj.video:
+                            bot.send_video(user_id, msg_obj.video.file_id, caption=caption)
+                        elif msg_obj.document:
+                            bot.send_document(user_id, msg_obj.document.file_id, caption=caption)
+                        elif msg_obj.sticker:
+                            bot.send_sticker(user_id, msg_obj.sticker.file_id)
+                        elif msg_obj.voice:
+                            bot.send_voice(user_id, msg_obj.voice.file_id, caption=caption)
+                        elif msg_obj.audio:
+                            bot.send_audio(user_id, msg_obj.audio.file_id, caption=caption)
+                        elif msg_obj.animation:
+                            bot.send_animation(user_id, msg_obj.animation.file_id, caption=caption)
+                        elif msg_obj.text:
+                            bot.send_message(user_id, caption if caption else msg_obj.text)
+                        else:
+                            bot.copy_message(user_id, m.chat.id, msg_obj.message_id)
+                    success += 1
+                except:
+                    if "blocked" in str(e).lower():
+                        blocked += 1
+                        users_collection.delete_one({"_id": user_id})
+                    else:
+                        fail += 1
+                time.sleep(0.02)
+            
+            broadcast_history.insert_one({
+                "success": success,
+                "fail": fail,
+                "blocked": blocked,
+                "total": total_users,
+                "time_readable": datetime.now().strftime('%d %b %Y, %I:%M:%S %p')
+            })
             
             owner_name = get_owner_name()
             owner_text = f"\n👑 *Owner:* {owner_name}" if owner_name else ""
             
             bot.edit_message_text(
-                styled_reply("✅ BROADCAST COMPLETE!", "success") + "\n\n"
-                f"*📊 Total Users:* {result['total']}\n"
-                f"*✅ Successfully Sent:* {result['success']}\n"
-                f"*❌ Failed:* {result['fail']}\n"
-                f"*🚫 Blocked & Removed:* {result['blocked']}\n"
-                f"*📅 Time:* {datetime.now().strftime('%d %b %Y, %I:%M:%S %p')}\n\n"
-                f"*📊 Broadcast History:* /bhistory"
+                f"✅ *BROADCAST COMPLETE!*\n\n"
+                f"*📊 Total:* {total_users}\n"
+                f"*✅ Sent:* {success}\n"
+                f"*❌ Failed:* {fail}\n"
+                f"*🚫 Blocked:* {blocked}"
                 f"{owner_text}",
                 msg.chat.id, msg.message_id,
                 parse_mode="Markdown"
             )
-            
         except Exception as e:
             bot.edit_message_text(
-                styled_reply("❌ BROADCAST FAILED!", "error") + "\n\n"
-                f"*Error:* {str(e)[:100]}",
+                f"❌ *Failed:* {str(e)[:100]}",
                 msg.chat.id, msg.message_id,
                 parse_mode="Markdown"
             )
     
     executor.submit(handle_broadcast)
 
-# =============== BROADCAST HISTORY COMMAND ===============
-@bot.message_handler(commands=['bhistory'])
-def broadcast_history_cmd(m):
+@bot.message_handler(commands=['backup'])
+def backup_cmd(m):
     uid = str(m.chat.id)
-    
     if not is_owner(uid):
-        bot.reply_to(m, styled_reply("Owner only!", "error"), parse_mode="Markdown")
         return
     
-    history = get_broadcast_history(10)
-    owner_name = get_owner_name()
-    owner_text = f"\n👑 *Owner:* {owner_name}" if owner_name else ""
+    msg = bot.reply_to(m, "⏳ *Creating backup...*", parse_mode="Markdown")
     
-    if not history:
-        bot.reply_to(m, 
-            styled_reply("📋 NO BROADCAST HISTORY", "info") + "\n\n"
-            "*No broadcasts sent yet.*"
-            f"{owner_text}",
-            parse_mode="Markdown"
-        )
-        return
+    def handle_backup():
+        try:
+            backup_file, data = create_full_backup()
+            
+            with open(backup_file, "rb") as f:
+                bot.send_document(
+                    m.chat.id, f,
+                    caption=f"📦 *Backup Complete!*\n\n"
+                            f"*👥 Users:* {data['backup_info']['total_users']}\n"
+                            f"*📅 Time:* {data['backup_info']['created_at_readable']}",
+                    parse_mode="Markdown"
+                )
+            
+            bot.edit_message_text(
+                f"✅ *Backup created!*",
+                msg.chat.id, msg.message_id,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            bot.edit_message_text(
+                f"❌ *Failed:* {str(e)[:100]}",
+                msg.chat.id, msg.message_id,
+                parse_mode="Markdown"
+            )
     
-    msg = styled_reply("📊 BROADCAST HISTORY", "info") + "\n\n"
-    for i, h in enumerate(history, 1):
-        msg += f"*{i}.* 📅 {h['time_readable']}\n"
-        msg += f"   *✅ Success:* {h['success']}\n"
-        msg += f"   *❌ Failed:* {h['fail']}\n"
-        msg += f"   *🚫 Blocked:* {h['blocked']}\n"
-        msg += f"   *📊 Total:* {h['total']}\n\n"
-    
-    msg += owner_text
-    
-    bot.reply_to(m, msg, parse_mode="Markdown")
+    executor.submit(handle_backup)
 
-# =============== USER STATS COMMAND ===============
+@bot.message_handler(commands=['restore'])
+def restore_cmd(m):
+    uid = str(m.chat.id)
+    if not is_owner(uid):
+        return
+    
+    if not m.reply_to_message or not m.reply_to_message.document:
+        bot.reply_to(m, "📥 *Reply to a backup JSON file with /restore*", parse_mode="Markdown")
+        return
+    
+    msg = bot.reply_to(m, "⏳ *Restoring...*", parse_mode="Markdown")
+    
+    def handle_restore():
+        try:
+            file_info = bot.get_file(m.reply_to_message.document.file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+            data = json.loads(downloaded_file.decode('utf-8'))
+            
+            result = restore_from_backup(data)
+            
+            bot.edit_message_text(
+                f"✅ *Restore Complete!*\n\n"
+                f"*👥 Users Added:* {result['users']}\n"
+                f"*📢 Broadcasts:* {result['history']}",
+                msg.chat.id, msg.message_id,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            bot.edit_message_text(
+                f"❌ *Failed:* {str(e)[:100]}",
+                msg.chat.id, msg.message_id,
+                parse_mode="Markdown"
+            )
+    
+    executor.submit(handle_restore)
+
 @bot.message_handler(commands=['stats'])
 def stats_cmd(m):
     uid = str(m.chat.id)
-    
     if not is_owner(uid):
-        bot.reply_to(m, styled_reply("Owner only!", "error"), parse_mode="Markdown")
         return
     
     total_users = get_user_count()
-    history = get_broadcast_history(1)
-    owner_name = get_owner_name()
-    owner_text = f"\n👑 *Owner:* {owner_name}" if owner_name else ""
+    last_broadcast = broadcast_history.find_one(sort=[("time_readable", -1)])
     
-    msg = styled_reply("📊 BOT STATISTICS", "info") + "\n\n"
+    msg = f"📊 *Bot Statistics*\n\n"
     msg += f"*👥 Total Users:* {total_users}\n"
     
-    if history:
-        last = history[0]
+    if last_broadcast:
         msg += f"\n*📢 Last Broadcast:*\n"
-        msg += f"   *✅ Sent:* {last['success']}\n"
-        msg += f"   *❌ Failed:* {last['fail']}\n"
-        msg += f"   *📅 Time:* {last['time_readable']}"
-    
-    msg += owner_text
+        msg += f"   *✅ Sent:* {last_broadcast.get('success', 0)}\n"
+        msg += f"   *❌ Failed:* {last_broadcast.get('fail', 0)}\n"
+        msg += f"   *📅 Time:* {last_broadcast.get('time_readable', 'Unknown')}"
     
     bot.reply_to(m, msg, parse_mode="Markdown")
 
-# =============== REMOVE BLOCKED USERS ===============
 @bot.message_handler(commands=['clean'])
 def clean_cmd(m):
     uid = str(m.chat.id)
-    
     if not is_owner(uid):
-        bot.reply_to(m, styled_reply("Owner only!", "error"), parse_mode="Markdown")
         return
     
-    msg = bot.reply_to(m, styled_reply("⏳ Checking for blocked users...", "info"), parse_mode="Markdown")
+    msg = bot.reply_to(m, "⏳ *Checking blocked users...*", parse_mode="Markdown")
     
     def handle_clean():
-        all_users = list(users_collection.find({}, {"_id": 1}))
-        total = len(all_users)
         removed = 0
-        
-        for user in all_users:
+        for user in users_collection.find({}, {"_id": 1}):
             try:
                 bot.send_chat_action(user["_id"], 'typing')
             except:
@@ -320,303 +377,155 @@ def clean_cmd(m):
                 removed += 1
             time.sleep(0.02)
         
-        owner_name = get_owner_name()
-        owner_text = f"\n👑 *Owner:* {owner_name}" if owner_name else ""
-        
         bot.edit_message_text(
-            styled_reply("✅ CLEANUP COMPLETE!", "success") + "\n\n"
-            f"*📊 Total Users Checked:* {total}\n"
-            f"*🗑️ Blocked Users Removed:* {removed}\n"
-            f"*👥 Remaining Users:* {total - removed}\n"
-            f"*📅 Time:* {datetime.now().strftime('%d %b %Y, %I:%M:%S %p')}"
-            f"{owner_text}",
+            f"✅ *Cleanup Complete!*\n\n*🗑️ Removed:* {removed} blocked users",
             msg.chat.id, msg.message_id,
             parse_mode="Markdown"
         )
     
     executor.submit(handle_clean)
 
-# =============== ADD NAME COMMAND ===============
-@bot.message_handler(commands=['addname'])
-def add_name_cmd(m):
-    uid = str(m.chat.id)
-    
-    if not is_owner(uid):
-        bot.reply_to(m, styled_reply("Owner only!", "error"), parse_mode="Markdown")
-        return
-    
-    args = m.text.split(maxsplit=1)
-    if len(args) != 2:
-        bot.reply_to(m, 
-            styled_reply("📝 ADD OWNER NAME", "info") + "\n\n"
-            "*Usage:* `/addname @Username`\n"
-            "*Example:* `/addname @XsilentFoundr`\n\n"
-            "*This name will appear in all replies.*",
-            parse_mode="Markdown"
-        )
-        return
-    
-    name = args[1].strip()
-    set_owner_name(name)
-    
-    bot.reply_to(m, 
-        styled_reply("✅ OWNER NAME ADDED!", "success") + "\n\n"
-        f"*👑 Display Name:* {name}\n\n"
-        f"*This name will now appear in all bot replies.*",
-        parse_mode="Markdown"
-    )
-
-# =============== REMOVE NAME COMMAND ===============
-@bot.message_handler(commands=['removename'])
-def remove_name_cmd(m):
-    uid = str(m.chat.id)
-    
-    if not is_owner(uid):
-        bot.reply_to(m, styled_reply("Owner only!", "error"), parse_mode="Markdown")
-        return
-    
-    remove_owner_name()
-    
-    bot.reply_to(m, 
-        styled_reply("✅ OWNER NAME REMOVED!", "success") + "\n\n"
-        "*Owner name will no longer appear in replies.*",
-        parse_mode="Markdown"
-    )
-
-# =============== EXPORT USERS ===============
 @bot.message_handler(commands=['export'])
 def export_cmd(m):
     uid = str(m.chat.id)
-    
     if not is_owner(uid):
-        bot.reply_to(m, styled_reply("Owner only!", "error"), parse_mode="Markdown")
         return
     
-    msg = bot.reply_to(m, styled_reply("⏳ Exporting users...", "info"), parse_mode="Markdown")
+    msg = bot.reply_to(m, "⏳ *Exporting users...*", parse_mode="Markdown")
     
     def handle_export():
         try:
             all_users = list(users_collection.find({}))
-            
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            file_name = f"users_export_{timestamp}.json"
+            file_name = f"users_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             
             with open(file_name, "w") as f:
                 json.dump(all_users, f, indent=4, default=str)
             
-            owner_name = get_owner_name()
-            owner_text = f"\n👑 *Owner:* {owner_name}" if owner_name else ""
-            
             with open(file_name, "rb") as f:
-                bot.send_document(
-                    m.chat.id,
-                    f,
-                    caption=styled_reply("📥 USERS EXPORT", "success") + "\n\n"
-                            f"*👥 Total Users:* {len(all_users)}\n"
-                            f"*📅 Time:* {datetime.now().strftime('%d %b %Y, %I:%M:%S %p')}"
-                            f"{owner_text}",
-                    parse_mode="Markdown"
-                )
+                bot.send_document(m.chat.id, f, caption=f"📥 *Users Export*\n\n*👥 Total:* {len(all_users)}")
             
             os.remove(file_name)
-            
-            bot.edit_message_text(
-                styled_reply("✅ EXPORT COMPLETE!", "success") + "\n\n"
-                f"*👥 Users Exported:* {len(all_users)}",
-                msg.chat.id, msg.message_id,
-                parse_mode="Markdown"
-            )
-            
+            bot.edit_message_text("✅ *Export Complete!*", msg.chat.id, msg.message_id)
         except Exception as e:
-            bot.edit_message_text(
-                styled_reply("❌ EXPORT FAILED!", "error") + "\n\n"
-                f"*Error:* {str(e)[:100]}",
-                msg.chat.id, msg.message_id,
-                parse_mode="Markdown"
-            )
+            bot.edit_message_text(f"❌ *Failed:* {str(e)[:100]}", msg.chat.id, msg.message_id)
     
     executor.submit(handle_export)
 
-# =============== SEND TO SPECIFIC USER ===============
 @bot.message_handler(commands=['sendto'])
 def sendto_cmd(m):
     uid = str(m.chat.id)
-    
     if not is_owner(uid):
-        bot.reply_to(m, styled_reply("Owner only!", "error"), parse_mode="Markdown")
         return
     
     args = m.text.split()
-    if len(args) != 2:
-        bot.reply_to(m, 
-            styled_reply("📤 SEND TO USER", "info") + "\n\n"
-            "*Usage:* `/sendto USER_ID`\n"
-            "*Then reply to a message to send it to that user.*\n\n"
-            "*Example:* `/sendto 7192516189`\n"
-            "*Then reply to a photo and type /sendto 7192516189*",
-            parse_mode="Markdown"
-        )
+    if len(args) != 2 or not m.reply_to_message:
+        bot.reply_to(m, "📤 *Usage:* `/sendto USER_ID` (reply to a message)", parse_mode="Markdown")
         return
     
-    target_user = args[1]
-    
-    if not m.reply_to_message:
-        bot.reply_to(m, styled_reply("⚠️ Reply to a message to send!", "warning"), parse_mode="Markdown")
-        return
-    
-    def handle_sendto():
-        try:
-            bot.copy_message(target_user, m.chat.id, m.reply_to_message.message_id)
-            owner_name = get_owner_name()
-            owner_text = f"\n👑 *Owner:* {owner_name}" if owner_name else ""
-            
-            bot.reply_to(m, 
-                styled_reply("✅ MESSAGE SENT!", "success") + "\n\n"
-                f"*👤 User:* {target_user}"
-                f"{owner_text}",
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            bot.reply_to(m, 
-                styled_reply("❌ FAILED!", "error") + "\n\n"
-                f"*Error:* {str(e)[:100]}",
-                parse_mode="Markdown"
-            )
-    
-    executor.submit(handle_sendto)
+    target = args[1]
+    try:
+        bot.copy_message(target, m.chat.id, m.reply_to_message.message_id)
+        bot.reply_to(m, f"✅ *Sent to {target}*", parse_mode="Markdown")
+    except Exception as e:
+        bot.reply_to(m, f"❌ *Failed:* {str(e)[:100]}", parse_mode="Markdown")
 
-# =============== DELETE ALL USERS ===============
 @bot.message_handler(commands=['deleteallusers'])
 def delete_all_users(m):
     uid = str(m.chat.id)
-    
     if not is_owner(uid):
-        bot.reply_to(m, styled_reply("Owner only!", "error"), parse_mode="Markdown")
         return
     
     keyboard = types.InlineKeyboardMarkup()
     keyboard.row(
-        types.InlineKeyboardButton("⚠️ CONFIRM DELETE ALL", callback_data="delete_users_confirm"),
-        types.InlineKeyboardButton("❌ CANCEL", callback_data="delete_users_cancel")
+        types.InlineKeyboardButton("⚠️ CONFIRM", callback_data="delete_confirm"),
+        types.InlineKeyboardButton("❌ CANCEL", callback_data="delete_cancel")
     )
     
-    owner_name = get_owner_name()
-    owner_text = f"\n👑 *Owner:* {owner_name}" if owner_name else ""
-    
     bot.reply_to(m, 
-        styled_reply("⚠️ WARNING!", "warning") + "\n\n"
-        f"*This will DELETE ALL USERS from the database!*\n"
-        f"*Total Users:* {get_user_count()}\n\n"
-        f"*Are you sure?*"
-        f"{owner_text}",
+        f"⚠️ *Delete ALL {get_user_count()} users?*\n\n*This cannot be undone!*",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("delete_users_"))
-def delete_users_callback(call):
-    uid = str(call.from_user.id)
-    
+@bot.message_handler(commands=['addname'])
+def add_name_cmd(m):
+    uid = str(m.chat.id)
     if not is_owner(uid):
-        bot.answer_callback_query(call.id, "Owner only!")
         return
     
-    if call.data == "delete_users_cancel":
-        bot.edit_message_text(
-            styled_reply("❌ DELETE CANCELLED", "error"),
-            call.message.chat.id, call.message.message_id,
-            parse_mode="Markdown"
-        )
-        bot.answer_callback_query(call.id)
+    args = m.text.split(maxsplit=1)
+    if len(args) != 2:
+        bot.reply_to(m, "📝 *Usage:* `/addname @Username`", parse_mode="Markdown")
         return
     
-    if call.data == "delete_users_confirm":
-        bot.edit_message_text(
-            styled_reply("⏳ Deleting all users...", "info"),
-            call.message.chat.id, call.message.message_id,
-            parse_mode="Markdown"
-        )
-        
-        def handle_delete():
-            count = users_collection.count_documents({})
-            users_collection.delete_many({})
-            
-            owner_name = get_owner_name()
-            owner_text = f"\n👑 *Owner:* {owner_name}" if owner_name else ""
-            
-            bot.edit_message_text(
-                styled_reply("✅ ALL USERS DELETED!", "success") + "\n\n"
-                f"*🗑️ Deleted:* {count} users"
-                f"{owner_text}",
-                call.message.chat.id, call.message.message_id,
-                parse_mode="Markdown"
-            )
-        
-        executor.submit(handle_delete)
-        bot.answer_callback_query(call.id)
+    set_owner_name(args[1].strip())
+    bot.reply_to(m, f"✅ *Owner name set to:* {args[1]}", parse_mode="Markdown")
+
+@bot.message_handler(commands=['removename'])
+def remove_name_cmd(m):
+    uid = str(m.chat.id)
+    if not is_owner(uid):
+        return
+    
+    remove_owner_name()
+    bot.reply_to(m, "✅ *Owner name removed*", parse_mode="Markdown")
+
+# =============== CALLBACKS ===============
+@bot.callback_query_handler(func=lambda call: True)
+def callback(call):
+    if call.data == "delete_confirm":
+        count = users_collection.count_documents({})
+        users_collection.delete_many({})
+        bot.edit_message_text(f"✅ *Deleted {count} users*", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    elif call.data == "delete_cancel":
+        bot.edit_message_text("❌ *Cancelled*", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    bot.answer_callback_query(call.id)
 
 # =============== START COMMAND ===============
 @bot.message_handler(commands=['start'])
 def start(m):
     uid = str(m.chat.id)
-    username = m.from_user.username
-    first_name = m.from_user.first_name
+    save_user(uid, m.from_user.username, m.from_user.first_name)
     
-    save_user(uid, username, first_name)
     owner_name = get_owner_name()
     owner_text = f"\n👑 *Owner:* {owner_name}" if owner_name else ""
     
-    if not is_owner(uid):
+    if is_owner(uid):
         bot.reply_to(m, 
-            styled_reply("👋 WELCOME!", "success") + "\n\n"
-            f"*This is a Broadcast Bot.*\n\n"
-            f"*Only the owner can send broadcasts.*\n"
-            f"*If you're the owner, use /broadcast*"
+            f"👑 *Owner Panel*\n\n"
+            f"📢 /broadcast - Send to all\n"
+            f"📦 /backup - Full backup\n"
+            f"📥 /restore - Restore backup\n"
+            f"📊 /stats - Bot stats\n"
+            f"🧹 /clean - Remove blocked\n"
+            f"📥 /export - Export users\n"
+            f"📤 /sendto - Send to user\n"
+            f"🗑️ /deleteallusers - Delete all\n"
+            f"📝 /addname - Set owner name\n"
+            f"📝 /removename - Remove owner name"
             f"{owner_text}",
             parse_mode="Markdown"
         )
     else:
         bot.reply_to(m, 
-            styled_reply("👑 OWNER PANEL", "info") + "\n\n"
-            "*📢* /broadcast *- Send to all users (reply to any message)*\n"
-            "*📊* /stats *- Bot statistics*\n"
-            "*📋* /bhistory *- Broadcast history*\n"
-            "*🧹* /clean *- Remove blocked users*\n"
-            "*📥* /export *- Export all users*\n"
-            "*📤* /sendto *- Send to specific user*\n"
-            "*🗑️* /deleteallusers *- Delete all users*\n"
-            "*📝* /addname *- Set owner name*\n"
-            "*📝* /removename *- Remove owner name*"
+            f"👋 *Welcome to XSilent Support!*\n\n"
+            f"*This is the official support bot.*\n"
+            f"*For any queries, contact the owner.*"
             f"{owner_text}",
             parse_mode="Markdown"
         )
 
 # =============== AUTO SAVE USER ON ANY MESSAGE ===============
 @bot.message_handler(func=lambda m: True)
-def auto_save_user(m):
-    """Auto save user when they send any message"""
+def auto_save(m):
     uid = str(m.chat.id)
-    username = m.from_user.username
-    first_name = m.from_user.first_name
-    
-    # Save or update user
-    save_user(uid, username, first_name)
-    
-    # Check if message has link
-    if m.text and re.search(r'https?://\S+', m.text):
-        # Just silently save, no need to reply
-        pass
+    save_user(uid, m.from_user.username, m.from_user.first_name)
 
 # =============== START BOT ===============
 if __name__ == "__main__":
     print("=" * 50)
-    print("📢 MEGA BROADCAST BOT STARTED!")
+    print("📢 BROADCAST BOT STARTED!")
     print(f"👑 Owner: {OWNER_IDS[0]}")
-    print(f"👥 Total Users: {get_user_count()}")
-    print("📅 " + datetime.now().strftime('%d %b %Y, %I:%M:%S %p'))
+    print(f"👥 Users: {get_user_count()}")
     print("=" * 50)
-    print("✅ Supported: Photo, Video, Document, Sticker, Voice, Audio, Animation, Text, Links")
-    print("✅ Auto Saves: Username, First Name, Last Active")
-    print("=" * 50)
-    
     bot.infinity_polling()
